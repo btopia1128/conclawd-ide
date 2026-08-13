@@ -1,0 +1,39 @@
+# Xcode
+build/
+DerivedData/
+*.xcodeproj/xcuserdata/
+*.xcworkspace/xcuserdata/
+xcuserdata/
+*.pbxuser
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+*.xccheckout
+*.moved-aside
+
+# Swift Package Manager
+.build/
+Packages/
+Package.pins
+Package.resolved
+
+# Profiling
+*.profraw
+*.profdata
+
+# ML Models (download separately, see README)
+*.mlpackage
+*.mlmodelc
+Conclawd/Resources/e5_tokenizer/
+
+# Claude Code local config (agent memory, skills, settings)
+.claude/
+
+# Environment
+.env
+.env.*
+
+# Misc
+.DS_Store
+*.swp
+*~

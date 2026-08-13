@@ -1,0 +1,101 @@
+name: Conclawd
+options:
+  bundleIdPrefix: com.conclawd
+  deploymentTarget:
+    macOS: "14.0"
+  generateEmptyDirectories: true
+
+packages:
+  SwiftTerm:
+    url: https://github.com/migueldeicaza/SwiftTerm
+    from: 1.2.0
+  Yams:
+    url: https://github.com/jpsim/Yams
+    from: 5.0.0
+  Highlightr:
+    url: https://github.com/raspu/Highlightr
+    from: 2.1.0
+  GRDB:
+    url: https://github.com/groue/GRDB.swift
+    from: 7.0.0
+
+targets:
+  Conclawd:
+    type: application
+    platform: macOS
+    sources:
+      - path: Conclawd
+        excludes:
+          - Resources/MultilingualE5Small.mlpackage
+          - Resources/MultilingualE5Small.mlmodelc
+          - Resources/e5_tokenizer
+      - path: Conclawd/Resources/MultilingualE5Small.mlmodelc
+        type: folder
+        buildPhase: resources
+      - path: Conclawd/Resources/e5_tokenizer
+        type: folder
+        buildPhase: resources
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.conclawd.app
+        PRODUCT_NAME: Conclawd
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_LSApplicationCategoryType: "public.app-category.developer-tools"
+        INFOPLIST_KEY_CFBundleDisplayName: Conclawd
+        SWIFT_VERSION: "6.0"
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        ENABLE_APP_SANDBOX: NO
+        CODE_SIGNING_ALLOWED: NO
+    dependencies:
+      - package: SwiftTerm
+      - package: Yams
+      - package: Highlightr
+      - package: GRDB
+      - sdk: CoreML.framework
+
+  ConclawdEmbed:
+    type: tool
+    platform: macOS
+    sources:
+      - path: ConclawdEmbed
+      - path: Conclawd/Vendor/Tokenizers
+    settings:
+      base:
+        PRODUCT_NAME: conclawd-embed
+        SWIFT_VERSION: "6.0"
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        CODE_SIGNING_ALLOWED: NO
+    dependencies:
+      - sdk: CoreML.framework
+
+  ConclawdTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - ConclawdTests
+    dependencies:
+      - target: Conclawd
+    settings:
+      base:
+        SWIFT_VERSION: "6.0"
+        GENERATE_INFOPLIST_FILE: YES
+
+schemes:
+  Conclawd:
+    build:
+      targets:
+        Conclawd: all
+    run:
+      config: Debug
+      environmentVariables:
+        - variable: OS_ACTIVITY_DT_MODE
+          value: "NO"
+          isEnabled: true
+    test:
+      config: Debug
+      targets:
+        - ConclawdTests
+    profile:
+      config: Release
