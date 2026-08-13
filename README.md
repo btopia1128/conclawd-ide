@@ -18,14 +18,27 @@ Manage multiple Claude Code agents in a Slack-like interface with an organizatio
 - **Git Integration** -- Branch display and switching from the status bar
 - **Schedule Editor** -- Set up recurring agent tasks
 
-## Requirements
+## Installation
+
+### Download (Recommended)
+
+**[Download Conclawd.dmg](https://pub-3d16ad835aab4ec7804bf72e28fa2452.r2.dev/Conclawd.dmg)** — signed and notarized by Apple.
+
+Open the DMG and drag Conclawd into your Applications folder.
+
+Requirements:
+
+- macOS 14.0+ (Apple Silicon)
+- [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and configured
+
+## Building from Source
+
+Requirements:
 
 - macOS 14.0+
 - Xcode 15+
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen)
 - [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code) installed and configured
-
-## Setup
 
 ### 1. Clone and generate project
 
@@ -105,7 +118,9 @@ Vendored code from [swift-transformers](https://github.com/huggingface/swift-tra
 
 ## Contributing
 
-This project accepts **issues only** -- pull requests are not accepted at this time. Bug reports, feature requests, and feedback are welcome via [GitHub Issues](https://github.com/rinte-ringoteto/conclawd-ide/issues).
+- **Issues are welcome.** Bug reports, feature requests, and feedback via [GitHub Issues](https://github.com/rinte-ringoteto/conclawd-ide/issues) are appreciated.
+- **Pull requests are not accepted.** PRs will not be reviewed or merged. This project is maintained solo, and the source is published for transparency rather than co-development.
+- **Want to change something?** Fork the repository. The MIT license lets you modify and redistribute your own version freely.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 
