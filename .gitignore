@@ -26,9 +26,8 @@ Package.resolved
 *.mlmodelc
 Conclawd/Resources/e5_tokenizer/
 
-# Claude Code local config (agent memory, settings) — shared skills are tracked
-.claude/*
-!.claude/skills/
+# Claude Code local config (agent memory, skills, settings)
+.claude/
 
 # Environment
 .env
