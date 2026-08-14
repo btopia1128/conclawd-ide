@@ -193,7 +193,7 @@ final class ChatSessionManager {
                 let defaultModel = UserDefaults.standard.string(forKey: "defaultModel") ?? ""
                 if !defaultModel.isEmpty, defaultModel != AgentModel.inherit.rawValue {
                     cliArgs.append("--model")
-                    cliArgs.append(defaultModel)
+                    cliArgs.append(AgentModel.from(defaultModel).cliModelId(for: .claude))
                 }
             }
             switch config.permissionMode {
@@ -215,7 +215,7 @@ final class ChatSessionManager {
         let command = "\(escapedClaude) \(cliArgs.joined(separator: " "))"
 
         // Environment
-        var env = ProcessInfo.processInfo.environment
+        var env = CLIPathResolver.augmentedEnvironment(cliPath: config.claudePath)
         env["TERM"] = "xterm-256color"
         env["FORCE_COLOR"] = "0"
         env["NO_COLOR"] = "1"

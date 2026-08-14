@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 struct ContentView: View {
     @Environment(AppState.self) private var appState
     @State private var showSidebar = true
-    @State private var showInspector = true
+    @State private var showInspector = false // TEMP-DEBUG
     @State private var sidebarWidth: CGFloat = 240
     @State private var inspectorWidth: CGFloat = 400
 
@@ -49,7 +49,12 @@ struct ContentView: View {
         .ignoresSafeArea(.all, edges: .top)
         .themedBackground(Color.appWindowBackground)
         .background {
-            WindowAccessor()
+            WindowAccessor(title: appState.windowTitle)
+            FileCreationShortcutMonitor(
+                canCreate: appState.selectedProject != nil,
+                onNewFile: { appState.promptCreateFile() },
+                onNewFolder: { appState.promptCreateDirectory() }
+            )
         }
         .overlay(alignment: .bottom) {
             if let message = appState.toastMessage {
@@ -97,33 +102,66 @@ private struct CenterPaneArea: View {
     @AppStorage("secondaryPaneFraction") private var secondaryPaneFraction: Double = 0.5
     @State private var liveFraction: Double?
     @State private var dropTargetPane: PaneID?
+    @State private var availableWidth: CGFloat = 0
 
     private let dividerWidth: CGFloat = 6
 
     var body: some View {
         if appState.secondaryPane != nil {
-            GeometryReader { proxy in
-                let usable = max(1, proxy.size.width - dividerWidth)
-                let fraction = liveFraction ?? secondaryPaneFraction
-                let primaryWidth = max(160, min(usable - 160, usable * fraction)).rounded()
-                let secondaryWidth = max(0, usable - primaryWidth)
-                HStack(spacing: 0) {
-                    paneContainer(.primary)
-                        .frame(width: primaryWidth)
+            // Width comes from a background measurement (see `widthReader`)
+            // rather than from a container `GeometryReader`. A container reader
+            // reports a stale width when a sibling (the right inspector) is
+            // inserted/removed with an animated transition, which made the
+            // secondary pane bleed under the inspector on open and leave a
+            // blank gap on close. The resolved background size always reflects
+            // the real available width.
+            let usable = max(1, availableWidth - dividerWidth)
+            let fraction = liveFraction ?? secondaryPaneFraction
+            let primaryWidth = max(160, min(usable - 160, usable * fraction)).rounded()
+            let secondaryWidth = max(0, usable - primaryWidth)
+            // The width is measured from a clear container view that is pinned to
+            // the real available space (`maxWidth: .infinity`), NOT from the pane
+            // HStack. The HStack sizes itself to its fixed-width children, so
+            // measuring it would feed its (possibly overflowing) content width
+            // back into `availableWidth` — a self-reinforcing loop that, once the
+            // right inspector opens and shrinks the container, leaves the panes
+            // too wide so they bleed over and clip the inspector. Measuring the
+            // clear container instead always reflects the true available width.
+            Color.clear
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(widthReader)
+                .overlay(alignment: .leading) {
+                    HStack(spacing: 0) {
+                        paneContainer(.primary)
+                            .frame(width: primaryWidth)
 
-                    PaneDivider(
-                        usableWidth: usable,
-                        committedFraction: $secondaryPaneFraction,
-                        liveFraction: $liveFraction
-                    )
+                        PaneDivider(
+                            usableWidth: usable,
+                            committedFraction: $secondaryPaneFraction,
+                            liveFraction: $liveFraction
+                        )
 
-                    paneContainer(.secondary)
-                        .frame(width: secondaryWidth)
+                        paneContainer(.secondary)
+                            .frame(width: secondaryWidth)
+                    }
                 }
-                .frame(width: proxy.size.width, height: proxy.size.height)
-            }
+                .clipped()
         } else {
             paneContainer(.primary)
+        }
+    }
+
+    // Measures the real container width and feeds it back via a preference so
+    // the split ratio always tracks the current available space.
+    private var widthReader: some View {
+        GeometryReader { proxy in
+            Color.clear
+                .preference(key: PaneAreaWidthKey.self, value: proxy.size.width)
+        }
+        .onPreferenceChange(PaneAreaWidthKey.self) { width in
+            if availableWidth != width {
+                availableWidth = width
+            }
         }
     }
 
@@ -136,6 +174,7 @@ private struct CenterPaneArea: View {
         )
         .overlay(
             Rectangle()
+                .inset(by: 0.5)
                 .stroke(
                     appState.activePaneId == paneId && appState.secondaryPane != nil
                         ? Color.accentColor.opacity(0.5)
@@ -159,6 +198,11 @@ private struct CenterPaneArea: View {
             }
         }
         .animation(.easeInOut(duration: 0.15), value: dropTargetPane)
+        // Clip each pane to its own SwiftUI frame. The terminal / editor are
+        // NSView-backed; without clipping their layers bleed past the animated
+        // frame during a live divider drag — overflowing into the sidebar and
+        // leaving stale border-stroke pixels (ghost lines) behind.
+        .clipped()
         .contentShape(Rectangle())
         .simultaneousGesture(
             TapGesture().onEnded {
@@ -172,6 +216,15 @@ private struct CenterPaneArea: View {
             appState: appState,
             dropTargetPane: $dropTargetPane
         ))
+    }
+}
+
+// MARK: - Pane Area Width Preference
+
+private struct PaneAreaWidthKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = nextValue()
     }
 }
 

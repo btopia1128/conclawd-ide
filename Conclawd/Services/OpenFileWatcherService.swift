@@ -9,6 +9,10 @@ final class OpenFileWatcherService {
     /// Called when an open file is modified externally. Parameter is the file's OpenFile ID.
     var onFileChanged: ((UUID) -> Void)?
 
+    /// Remembers each watched file's path so the watch can be re-armed after an
+    /// atomic save (write-temp + rename) replaces the original inode.
+    private var watchedURLs: [UUID: URL] = [:]
+
     init(debounceInterval: TimeInterval = 0.5) {
         self.debounceInterval = debounceInterval
     }
@@ -20,6 +24,7 @@ final class OpenFileWatcherService {
     /// Start watching a file associated with an OpenFile ID.
     func watch(id: UUID, url: URL) {
         guard watchers[id] == nil else { return }
+        watchedURLs[id] = url
 
         let path = url.path(percentEncoded: false)
         let fd = open(path, O_EVTONLY)
@@ -35,7 +40,11 @@ final class OpenFileWatcherService {
         watchers[id] = watch
 
         source.setEventHandler { [weak self] in
-            self?.handleChange(id: id)
+            // Capture the event mask before handling: a rename/delete means the
+            // inode this fd points at was replaced (atomic save), so the watch is
+            // now dead and must be re-armed on the path.
+            let isReplaced = !source.data.intersection([.rename, .delete]).isEmpty
+            self?.handleChange(id: id, replaced: isReplaced)
         }
 
         source.setCancelHandler {
@@ -47,6 +56,7 @@ final class OpenFileWatcherService {
 
     /// Stop watching a specific file.
     func unwatch(id: UUID) {
+        watchedURLs.removeValue(forKey: id)
         guard let watch = watchers.removeValue(forKey: id) else { return }
         watch.debounceWork?.cancel()
         watch.source.cancel()
@@ -59,17 +69,30 @@ final class OpenFileWatcherService {
             watch.source.cancel()
         }
         watchers.removeAll()
+        watchedURLs.removeAll()
     }
 
-    private func handleChange(id: UUID) {
+    private func handleChange(id: UUID, replaced: Bool) {
         guard let watch = watchers[id] else { return }
 
-        watch.debounceWork?.cancel()
-        let work = DispatchWorkItem { [weak self] in
+        // Atomic save replaced the file: the current fd is now stale. Re-arm the
+        // watch on the same path so subsequent external edits keep firing.
+        if replaced, let url = watchedURLs[id] {
+            watch.debounceWork?.cancel()
+            watch.source.cancel()
+            watchers.removeValue(forKey: id)
+            watchedURLs.removeValue(forKey: id)
+            self.watch(id: id, url: url)
+        }
+
+        let notifyWork = DispatchWorkItem { [weak self] in
             self?.onFileChanged?(id)
         }
-        watch.debounceWork = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + debounceInterval, execute: work)
+        // Re-fetch the (possibly re-armed) watch to attach the debounce token.
+        let activeWatch = watchers[id] ?? watch
+        activeWatch.debounceWork?.cancel()
+        activeWatch.debounceWork = notifyWork
+        DispatchQueue.main.asyncAfter(deadline: .now() + debounceInterval, execute: notifyWork)
     }
 
     private class FileWatch {

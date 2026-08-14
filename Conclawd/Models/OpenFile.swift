@@ -49,7 +49,8 @@ enum FileViewMode: Equatable {
 /// Represents a file opened in the center pane editor.
 struct OpenFile: Identifiable, Equatable {
     let id: UUID = UUID()
-    let url: URL
+    /// Mutable so an open tab can follow its file when renamed/moved on disk.
+    var url: URL
     let kind: FileKind
     var content: String
     var hasChanges: Bool = false
@@ -80,7 +81,8 @@ struct OpenFile: Identifiable, Equatable {
         return fileName
     }
 
-    static func == (lhs: OpenFile, rhs: OpenFile) -> Bool {
-        lhs.id == rhs.id
-    }
+    // Equality is the synthesized member-wise one on purpose. An `id`-only
+    // comparison makes SwiftUI treat an edited file as unchanged, so views
+    // holding an `OpenFile` (the editor) never re-evaluate and keep serving a
+    // pre-edit `content` snapshot back to AppKit.
 }

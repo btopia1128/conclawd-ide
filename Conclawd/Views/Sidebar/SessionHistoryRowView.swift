@@ -28,6 +28,14 @@ struct SessionHistoryRowView: View {
                     Text(record.agentName)
                         .font(.system(size: 12, weight: .medium))
                         .lineLimit(1)
+
+                    if let dirName {
+                        Text(dirName)
+                            .font(.system(size: 10))
+                            .foregroundStyle(Color.appTertiary)
+                            .lineLimit(1)
+                            .layoutPriority(-1)
+                    }
                 }
 
                 if let prompt = record.initialPrompt {
@@ -79,6 +87,12 @@ struct SessionHistoryRowView: View {
     }
 
     // MARK: - Display Logic
+
+    /// The last path component of the session's project directory, or nil for home/user agents.
+    private var dirName: String? {
+        guard let path = record.projectPath, !path.isEmpty else { return nil }
+        return URL(filePath: path).lastPathComponent
+    }
 
     private var iconName: String {
         if record.isAbnormalTermination {

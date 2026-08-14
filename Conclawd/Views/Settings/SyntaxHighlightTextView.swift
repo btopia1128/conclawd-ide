@@ -8,8 +8,13 @@ struct SyntaxHighlightTextView: NSViewRepresentable {
     var isEditable: Bool = true
     var showLineNumbers: Bool = false
     var wordWrap: Bool = false
+    var relativeScrollPosition: Double = 0
     /// When true, highlights skill variable placeholders ($ARGUMENTS, $0, ${VAR}, !`cmd`).
     var highlightSkillVariables: Bool = false
+    /// Grayed-out hint text shown while the document is empty.
+    var placeholder: String? = nil
+    /// Reports the editor scroll position as a 0...1 ratio.
+    var onRelativeScrollPositionChange: ((Double) -> Void)?
     /// Fired on mouseDown so the caller can switch active split-pane focus.
     var onMouseDown: (() -> Void)?
     /// Triggers updateNSView when appearance mode changes (e.g. Light ↔ Claude).
@@ -60,6 +65,7 @@ struct SyntaxHighlightTextView: NSViewRepresentable {
         // Use LineNumberTextView instead of plain NSTextView
         let textView = LineNumberTextView(frame: NSRect(x: 0, y: 0, width: 200, height: 100), textContainer: textContainer)
         textView.showLineNumbers = showLineNumbers
+        textView.placeholderText = placeholder
         textView.isEditable = isEditable
         textView.isSelectable = true
         textView.allowsUndo = true
@@ -98,12 +104,14 @@ struct SyntaxHighlightTextView: NSViewRepresentable {
         scrollView.drawsBackground = false
         scrollView.autohidesScrollers = true
 
+        context.coordinator.attach(to: scrollView)
         context.coordinator.textView = textView
         context.coordinator.highlightr = highlightr
         context.coordinator.codeStorage = textStorage
         textStorage.delegate = context.coordinator
 
         textView.onMouseDown = onMouseDown
+        context.coordinator.restoreRelativeScrollPosition(relativeScrollPosition, in: scrollView)
 
         return scrollView
     }
@@ -112,7 +120,9 @@ struct SyntaxHighlightTextView: NSViewRepresentable {
         guard let textView = context.coordinator.textView as? LineNumberTextView,
               let highlightr = context.coordinator.highlightr else { return }
 
+        context.coordinator.parent = self
         textView.onMouseDown = onMouseDown
+        textView.placeholderText = placeholder
 
         // Theme
         let isDark = scrollView.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
@@ -183,6 +193,7 @@ struct SyntaxHighlightTextView: NSViewRepresentable {
             }
         }
 
+        context.coordinator.restoreRelativeScrollPosition(relativeScrollPosition, in: scrollView)
         textView.isEditable = isEditable
     }
 
@@ -206,6 +217,10 @@ struct SyntaxHighlightTextView: NSViewRepresentable {
         var codeStorage: CodeAttributedString?
         var isUpdating = false
         var currentTheme: String = ""
+        weak var scrollView: NSScrollView?
+        private var scrollObserver: NSObjectProtocol?
+        private var lastKnownRelativeScrollPosition: Double?
+        private var isRestoringScrollPosition = false
         /// When true, suppresses CodeAttributedString's background re-highlighting.
         /// Prevents concurrent JSContext access (Highlightr is not thread-safe).
         var suppressCodeHighlighting = false
@@ -228,6 +243,12 @@ struct SyntaxHighlightTextView: NSViewRepresentable {
             self.parent = parent
         }
 
+        deinit {
+            if let scrollObserver {
+                NotificationCenter.default.removeObserver(scrollObserver)
+            }
+        }
+
         // MARK: - HighlightDelegate
 
         // MARK: - NSTextViewDelegate
@@ -235,6 +256,57 @@ struct SyntaxHighlightTextView: NSViewRepresentable {
         func textDidChange(_ notification: Notification) {
             guard !isUpdating, let textView = textView else { return }
             parent.text = textView.string
+        }
+
+        func attach(to scrollView: NSScrollView) {
+            self.scrollView = scrollView
+            scrollView.contentView.postsBoundsChangedNotifications = true
+            if let scrollObserver {
+                NotificationCenter.default.removeObserver(scrollObserver)
+            }
+            scrollObserver = NotificationCenter.default.addObserver(
+                forName: NSView.boundsDidChangeNotification,
+                object: scrollView.contentView,
+                queue: .main
+            ) { [weak self] _ in
+                self?.reportRelativeScrollPosition()
+            }
+        }
+
+        func restoreRelativeScrollPosition(_ relativeScrollPosition: Double, in scrollView: NSScrollView) {
+            let clamped = min(max(relativeScrollPosition, 0), 1)
+            if let lastKnownRelativeScrollPosition,
+               abs(lastKnownRelativeScrollPosition - clamped) < 0.001 {
+                return
+            }
+
+            let maxOffset = max(scrollView.documentViewHeight - scrollView.contentSize.height, 0)
+            guard maxOffset > 0 else {
+                lastKnownRelativeScrollPosition = 0
+                return
+            }
+
+            isRestoringScrollPosition = true
+            let targetY = maxOffset * clamped
+            scrollView.contentView.scroll(to: NSPoint(x: 0, y: targetY))
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+            isRestoringScrollPosition = false
+            lastKnownRelativeScrollPosition = clamped
+        }
+
+        private func reportRelativeScrollPosition() {
+            guard !isRestoringScrollPosition, let scrollView else { return }
+
+            let maxOffset = max(scrollView.documentViewHeight - scrollView.contentSize.height, 0)
+            let relative: Double
+            if maxOffset > 0 {
+                relative = min(max(Double(scrollView.contentView.bounds.origin.y / maxOffset), 0), 1)
+            } else {
+                relative = 0
+            }
+
+            lastKnownRelativeScrollPosition = relative
+            parent.onRelativeScrollPositionChange?(relative)
         }
 
         /// Apply skill variable highlights using layout manager temporary attributes
@@ -295,6 +367,12 @@ struct SyntaxHighlightTextView: NSViewRepresentable {
         case "makefile": return "makefile"
         default: return nil
         }
+    }
+}
+
+private extension NSScrollView {
+    var documentViewHeight: CGFloat {
+        documentView?.bounds.height ?? 0
     }
 }
 

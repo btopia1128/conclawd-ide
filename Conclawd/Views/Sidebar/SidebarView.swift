@@ -14,6 +14,8 @@ struct SidebarView: View {
     @Binding var showSidebar: Bool
     @State private var showingNewAgent = false
     @State private var showingNewSkill = false
+    /// Non-nil while the AI-assisted creation sheet is up, carrying its target.
+    @State private var aiCreationKind: AICreationKind?
     @State private var showingNewSchedule = false
     @State private var agentToDelete: Agent?
     @State private var skillToDelete: Skill?
@@ -24,6 +26,10 @@ struct SidebarView: View {
     @State private var showingFullHistory = false
     @State private var showingShortcuts = false
     @State private var showingNewSession = false
+    /// Popover trigger for the inline "New Session" buttons in the empty states.
+    @State private var showingNewSessionInlinePopover = false
+    /// Popover trigger for the compact "+" new-session menu in section headers.
+    @State private var showingNewSessionMenuPopover = false
     @State private var renamingSessionId: UUID?
     @State private var renameText: String = ""
     @FocusState private var isRenameFocused: Bool
@@ -63,6 +69,7 @@ struct SidebarView: View {
             showingFullHistory: $showingFullHistory,
             showingNewAgent: $showingNewAgent,
             showingNewSkill: $showingNewSkill,
+            aiCreationKind: $aiCreationKind,
             showingNewSchedule: $showingNewSchedule,
             scheduleToEdit: $scheduleToEdit,
             presetSheetConfig: $presetSheetConfig,
@@ -134,41 +141,7 @@ struct SidebarView: View {
                     .multilineTextAlignment(.center)
 
                 Menu {
-                    Section("Create with AI — \(l10n.createForClaudeCode)") {
-                        Button {
-                            appState.startCreationSession(scope: .user)
-                        } label: {
-                            Label(l10n.userGlobal, systemImage: "person")
-                        }
-                        Button {
-                            pickProjectDirectoryForAICreation()
-                        } label: {
-                            Label(l10n.projectSpecific, systemImage: "folder")
-                        }
-                    }
-
-                    if hasCodexCLI {
-                        Section("Create with AI — \(l10n.createForCodex)") {
-                            Button {
-                                appState.startCodexCreationSession(scope: .user)
-                            } label: {
-                                Label(l10n.userGlobal, systemImage: "person")
-                            }
-                            Button {
-                                pickProjectDirectoryForCodexAICreation()
-                            } label: {
-                                Label(l10n.projectSpecific, systemImage: "folder")
-                            }
-                        }
-                    }
-
-                    Section {
-                        Button {
-                            showingNewAgent = true
-                        } label: {
-                            Label("Create Manually", systemImage: "square.and.pencil")
-                        }
-                    }
+                    creationMenuItems(kind: .agent)
                 } label: {
                     Label(l10n.newAgent, systemImage: "plus")
                         .font(.system(size: 12, weight: .medium))
@@ -279,46 +252,19 @@ struct SidebarView: View {
                     .controlSize(.small)
                     .padding(.top, 4)
                 } else {
-                    // Has agents or presets — menu with options
-                    Menu {
-                        Button {
-                            appState.startStandaloneSession()
-                        } label: {
-                            Label("Quick Start", systemImage: "terminal")
-                        }
-
-                        Button {
-                            showingNewSession = true
-                        } label: {
-                            Label("Configure & Start...", systemImage: "slider.horizontal.3")
-                        }
-
-                        Divider()
-                        Section("From Agent") {
-                            ForEach(appState.agents) { agent in
-                                Button {
-                                    appState.startAgent(agent)
-                                } label: {
-                                    HStack(spacing: 4) {
-                                        Circle()
-                                            .fill(agent.color.swiftUIColor)
-                                            .frame(width: 6, height: 6)
-                                        if let dir = agent.effectiveDirectory {
-                                            Text("\(agent.name) — \(dir.lastPathComponent)")
-                                        } else {
-                                            Text(agent.name)
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                    // Has agents or presets — popover with options
+                    Button {
+                        showingNewSessionInlinePopover = true
                     } label: {
                         Label(l10n.newSession, systemImage: "plus")
                             .font(.system(size: 12, weight: .medium))
                     }
-                    .menuStyle(.borderedButton)
+                    .buttonStyle(.bordered)
                     .controlSize(.small)
                     .padding(.top, 4)
+                    .popover(isPresented: $showingNewSessionInlinePopover, arrowEdge: .bottom) {
+                        newSessionPopoverContent { showingNewSessionInlinePopover = false }
+                    }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -378,45 +324,18 @@ struct SidebarView: View {
                                 .controlSize(.small)
                                 .padding(.top, 4)
                             } else {
-                                Menu {
-                                    Button {
-                                        appState.startStandaloneSession()
-                                    } label: {
-                                        Label("Quick Start", systemImage: "terminal")
-                                    }
-
-                                    Button {
-                                        showingNewSession = true
-                                    } label: {
-                                        Label("Configure & Start...", systemImage: "slider.horizontal.3")
-                                    }
-
-                                    Divider()
-                                    Section("From Agent") {
-                                        ForEach(appState.agents) { agent in
-                                            Button {
-                                                appState.startAgent(agent)
-                                            } label: {
-                                                HStack(spacing: 4) {
-                                                    Circle()
-                                                        .fill(agent.color.swiftUIColor)
-                                                        .frame(width: 6, height: 6)
-                                                    if let dir = agent.effectiveDirectory {
-                                                        Text("\(agent.name) — \(dir.lastPathComponent)")
-                                                    } else {
-                                                        Text(agent.name)
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
+                                Button {
+                                    showingNewSessionInlinePopover = true
                                 } label: {
                                     Label(l10n.newSession, systemImage: "plus")
                                         .font(.system(size: 12, weight: .medium))
                                 }
-                                .menuStyle(.borderedButton)
+                                .buttonStyle(.bordered)
                                 .controlSize(.small)
                                 .padding(.top, 4)
+                                .popover(isPresented: $showingNewSessionInlinePopover, arrowEdge: .bottom) {
+                                    newSessionPopoverContent { showingNewSessionInlinePopover = false }
+                                }
                             }
                         }
                         .frame(maxWidth: .infinity)
@@ -1237,6 +1156,16 @@ struct SidebarView: View {
         }
     }
 
+    // MARK: - Section Placeholder
+
+    private func sectionPlaceholder(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 11))
+            .foregroundStyle(Color.appTertiary)
+            .padding(.horizontal, 2)
+            .padding(.vertical, 4)
+    }
+
     // MARK: - Agent Section
 
     private func agentSection(_ title: String, agents: [Agent], showAddMenu: Bool = false) -> some View {
@@ -1255,6 +1184,10 @@ struct SidebarView: View {
                     newAgentMenu
                         .pointingHandCursor()
                 }
+            }
+
+            if agents.isEmpty {
+                sectionPlaceholder(l10n.noAgentsInSection)
             }
 
             VStack(spacing: 2) {
@@ -1374,41 +1307,7 @@ struct SidebarView: View {
                     .multilineTextAlignment(.center)
 
                 Menu {
-                    Section("Create with AI — \(l10n.createForClaudeCode)") {
-                        Button {
-                            appState.startSkillCreationSession(scope: .user)
-                        } label: {
-                            Label(l10n.userGlobal, systemImage: "book")
-                        }
-                        Button {
-                            pickProjectDirectoryForSkillCreation()
-                        } label: {
-                            Label(l10n.projectSpecific, systemImage: "book.fill")
-                        }
-                    }
-
-                    if hasCodexCLI {
-                        Section("Create with AI — \(l10n.createForCodex)") {
-                            Button {
-                                appState.startCodexSkillCreationSession(scope: .user)
-                            } label: {
-                                Label(l10n.userGlobal, systemImage: "book")
-                            }
-                            Button {
-                                pickProjectDirectoryForCodexSkillCreation()
-                            } label: {
-                                Label(l10n.projectSpecific, systemImage: "book.fill")
-                            }
-                        }
-                    }
-
-                    Section {
-                        Button {
-                            showingNewSkill = true
-                        } label: {
-                            Label("Create Manually", systemImage: "square.and.pencil")
-                        }
-                    }
+                    creationMenuItems(kind: .skill)
                 } label: {
                     Label(l10n.newSkill, systemImage: "plus")
                         .font(.system(size: 12, weight: .medium))
@@ -1470,6 +1369,10 @@ struct SidebarView: View {
                     newSkillMenu
                         .pointingHandCursor()
                 }
+            }
+
+            if skills.isEmpty {
+                sectionPlaceholder(l10n.noSkillsInSection)
             }
 
             VStack(spacing: 2) {
@@ -1787,48 +1690,30 @@ struct SidebarView: View {
             )
     }
 
-    private var hasCodexCLI: Bool {
-        appState.availableCLIProviders.contains(.codex)
+    /// Shared "+" menu contents: pick AI-assisted creation (which then asks for
+    /// CLI and scope in a sheet) or the manual form.
+    @ViewBuilder
+    private func creationMenuItems(kind: AICreationKind) -> some View {
+        Button {
+            aiCreationKind = kind
+        } label: {
+            Label(l10n.createWithAI, systemImage: "sparkles")
+        }
+
+        Button {
+            switch kind {
+            case .agent: showingNewAgent = true
+            case .skill: showingNewSkill = true
+            }
+        } label: {
+            Label(l10n.createManually, systemImage: "square.and.pencil")
+        }
     }
 
     private var newAgentMenu: some View {
         addIconMenuStyle(
             Menu {
-                Section("Create with AI — \(l10n.createForClaudeCode)") {
-                    Button {
-                        appState.startCreationSession(scope: .user)
-                    } label: {
-                        Label(l10n.userGlobal, systemImage: "person")
-                    }
-                    Button {
-                        pickProjectDirectoryForAICreation()
-                    } label: {
-                        Label(l10n.projectSpecific, systemImage: "folder")
-                    }
-                }
-
-                if hasCodexCLI {
-                    Section("Create with AI — \(l10n.createForCodex)") {
-                        Button {
-                            appState.startCodexCreationSession(scope: .user)
-                        } label: {
-                            Label(l10n.userGlobal, systemImage: "person")
-                        }
-                        Button {
-                            pickProjectDirectoryForCodexAICreation()
-                        } label: {
-                            Label(l10n.projectSpecific, systemImage: "folder")
-                        }
-                    }
-                }
-
-                Section {
-                    Button {
-                        showingNewAgent = true
-                    } label: {
-                        Label("Create Manually", systemImage: "square.and.pencil")
-                    }
-                }
+                creationMenuItems(kind: .agent)
             } label: {
                 addIconLabel
             }
@@ -1838,41 +1723,7 @@ struct SidebarView: View {
     private var newSkillMenu: some View {
         addIconMenuStyle(
             Menu {
-                Section("Create with AI — \(l10n.createForClaudeCode)") {
-                    Button {
-                        appState.startSkillCreationSession(scope: .user)
-                    } label: {
-                        Label(l10n.userGlobal, systemImage: "book")
-                    }
-                    Button {
-                        pickProjectDirectoryForSkillCreation()
-                    } label: {
-                        Label(l10n.projectSpecific, systemImage: "book.fill")
-                    }
-                }
-
-                if hasCodexCLI {
-                    Section("Create with AI — \(l10n.createForCodex)") {
-                        Button {
-                            appState.startCodexSkillCreationSession(scope: .user)
-                        } label: {
-                            Label(l10n.userGlobal, systemImage: "book")
-                        }
-                        Button {
-                            pickProjectDirectoryForCodexSkillCreation()
-                        } label: {
-                            Label(l10n.projectSpecific, systemImage: "book.fill")
-                        }
-                    }
-                }
-
-                Section {
-                    Button {
-                        showingNewSkill = true
-                    } label: {
-                        Label("Create Manually", systemImage: "square.and.pencil")
-                    }
-                }
+                creationMenuItems(kind: .skill)
             } label: {
                 addIconLabel
             }
@@ -1880,65 +1731,87 @@ struct SidebarView: View {
     }
 
     private var newSessionMenu: some View {
-        addIconMenuStyle(
-            Menu {
-                Button {
-                    appState.startStandaloneSession()
-                } label: {
-                    Label("Quick Start", systemImage: "terminal")
-                }
-
-                Button {
-                    showingNewSession = true
-                } label: {
-                    Label("Configure & Start...", systemImage: "slider.horizontal.3")
-                }
-
-                if !appState.sessionPresets.isEmpty {
-                    Divider()
-                    Section(l10n.presets) {
-                        ForEach(appState.sessionPresets) { preset in
-                            Button {
-                                appState.startSessionPreset(preset)
-                            } label: {
-                                Label(preset.name, systemImage: "pin.fill")
-                            }
-                        }
-                    }
-                }
-
-                if !appState.agents.isEmpty {
-                    Divider()
-                    Section("From Agent") {
-                        ForEach(appState.agents) { agent in
-                            Button {
-                                appState.startAgent(agent)
-                            } label: {
-                                HStack(spacing: 4) {
-                                    Circle()
-                                        .fill(agent.color.swiftUIColor)
-                                        .frame(width: 6, height: 6)
-                                    if let dir = agent.effectiveDirectory {
-                                        Text("\(agent.name) — \(dir.lastPathComponent)")
-                                    } else {
-                                        Text(agent.name)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-
-                Divider()
-                Button {
-                    sessionPresetSheetConfig = PresetSheetConfig()
-                } label: {
-                    Label(l10n.newPreset, systemImage: "plus")
-                }
-            } label: {
-                addIconLabel
-            }
+        Button {
+            showingNewSessionMenuPopover = true
+        } label: {
+            addIconLabel
+        }
+        .buttonStyle(.plain)
+        .background(
+            RoundedRectangle(cornerRadius: 5)
+                .fill(Color.secondary.opacity(0.25))
         )
+        .popover(isPresented: $showingNewSessionMenuPopover, arrowEdge: .bottom) {
+            newSessionPopoverContent { showingNewSessionMenuPopover = false }
+        }
+    }
+
+    /// Shared styled content for the new-session popovers. Replaces the native
+    /// menu so the "From Agent" rows can use a two-line layout (agent name on
+    /// top, working directory below) instead of a hard-to-read hyphenated string.
+    @ViewBuilder
+    private func newSessionPopoverContent(close: @escaping () -> Void) -> some View {
+        ScrollView {
+            newSessionPopoverRows(close: close)
+        }
+        .frame(width: 260)
+        .frame(maxHeight: 420)
+    }
+
+    @ViewBuilder
+    private func newSessionPopoverRows(close: @escaping () -> Void) -> some View {
+        VStack(alignment: .leading, spacing: 1) {
+            NewSessionActionRow(title: "Quick Start", systemImage: "terminal") {
+                close()
+                appState.startStandaloneSession()
+            }
+            NewSessionActionRow(title: "Configure & Start…", systemImage: "slider.horizontal.3") {
+                close()
+                DispatchQueue.main.async { showingNewSession = true }
+            }
+
+            if !appState.sessionPresets.isEmpty {
+                newSessionSectionHeader(l10n.presets)
+                ForEach(appState.sessionPresets) { preset in
+                    NewSessionActionRow(title: preset.name, systemImage: "pin.fill") {
+                        close()
+                        appState.startSessionPreset(preset)
+                    }
+                }
+            }
+
+            if !appState.agents.isEmpty {
+                newSessionSectionHeader("From Agent")
+                ForEach(appState.agentsByRecentUse) { agent in
+                    NewSessionAgentRow(agent: agent) {
+                        close()
+                        appState.startAgent(agent)
+                    }
+                }
+            }
+
+            Divider()
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+
+            NewSessionActionRow(title: l10n.newPreset, systemImage: "plus") {
+                close()
+                DispatchQueue.main.async { sessionPresetSheetConfig = PresetSheetConfig() }
+            }
+        }
+        .padding(6)
+    }
+
+    @ViewBuilder
+    private func newSessionSectionHeader(_ title: String) -> some View {
+        Text(title)
+            .font(.system(size: 10, weight: .medium))
+            .textCase(.uppercase)
+            .foregroundStyle(Color.appSecondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 8)
+            .padding(.top, 8)
+            .padding(.bottom, 2)
     }
 
     private var newShellMenu: some View {
@@ -2102,54 +1975,6 @@ struct SidebarView: View {
     }
 
     // MARK: - Directory Picker
-
-    private func pickProjectDirectoryForAICreation() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.message = "Select project directory (will create .claude/agents/ inside)"
-
-        if panel.runModal() == .OK, let url = panel.url {
-            appState.startCreationSession(scope: .project, projectDirectory: url)
-        }
-    }
-
-    private func pickProjectDirectoryForSkillCreation() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.message = "Select project directory for skill creation"
-
-        if panel.runModal() == .OK, let url = panel.url {
-            appState.startSkillCreationSession(scope: .project, projectDirectory: url)
-        }
-    }
-
-    private func pickProjectDirectoryForCodexAICreation() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.message = "Select project directory (will create .codex/agents/ inside)"
-
-        if panel.runModal() == .OK, let url = panel.url {
-            appState.startCodexCreationSession(scope: .project, projectDirectory: url)
-        }
-    }
-
-    private func pickProjectDirectoryForCodexSkillCreation() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.message = "Select project directory for Codex skill creation"
-
-        if panel.runModal() == .OK, let url = panel.url {
-            appState.startCodexSkillCreationSession(scope: .project, projectDirectory: url)
-        }
-    }
 
     private func pickProjectDirectoryForSkillDuplicate(skill: Skill) {
         let panel = NSOpenPanel()
@@ -2425,6 +2250,89 @@ private struct PulsingDot: View {
     }
 }
 
+// MARK: - New Session Popover Rows
+
+/// A single-line action row (icon + title) used inside the new-session popover.
+private struct NewSessionActionRow: View {
+    let title: String
+    let systemImage: String
+    let action: () -> Void
+    @State private var hovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 12))
+                    .foregroundStyle(Color.appSecondary)
+                    .frame(width: 16)
+                Text(title)
+                    .font(.system(size: 12))
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(hovered ? Color.primary.opacity(0.08) : .clear)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovered = $0 }
+        .pointingHandCursor()
+    }
+}
+
+/// A two-line agent row (name on top, working directory below) — replaces the
+/// hard-to-read "AgentName — dir" hyphenated string from the old native menu.
+private struct NewSessionAgentRow: View {
+    let agent: Agent
+    let action: () -> Void
+    @State private var hovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(agent.color.swiftUIColor)
+                    .frame(width: 7, height: 7)
+                    .frame(width: 16)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(agent.name)
+                        .font(.system(size: 12, weight: .medium))
+                        .lineLimit(1)
+                    if let dir = agent.effectiveDirectory {
+                        HStack(spacing: 3) {
+                            Image(systemName: "folder")
+                                .font(.system(size: 9))
+                            Text(dir.lastPathComponent)
+                                .font(.system(size: 10))
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                        }
+                        .foregroundStyle(Color.appSecondary)
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(hovered ? Color.primary.opacity(0.08) : .clear)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovered = $0 }
+        .pointingHandCursor()
+    }
+}
+
 // MARK: - Sidebar Sheets Modifier
 
 private struct SidebarSheetsModifier: ViewModifier {
@@ -2432,6 +2340,7 @@ private struct SidebarSheetsModifier: ViewModifier {
     @Binding var showingFullHistory: Bool
     @Binding var showingNewAgent: Bool
     @Binding var showingNewSkill: Bool
+    @Binding var aiCreationKind: AICreationKind?
     @Binding var showingNewSchedule: Bool
     @Binding var scheduleToEdit: AgentSchedule?
     @Binding var presetSheetConfig: PresetSheetConfig<ShellPreset>?
@@ -2450,6 +2359,9 @@ private struct SidebarSheetsModifier: ViewModifier {
             }
             .sheet(isPresented: $showingNewSkill) {
                 NewSkillSheet()
+            }
+            .sheet(item: $aiCreationKind) { kind in
+                AICreationSheet(kind: kind)
             }
             .sheet(isPresented: $showingNewSchedule) {
                 NewScheduleSheet()

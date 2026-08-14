@@ -11,12 +11,15 @@ enum AgentModel: Codable, CaseIterable, Hashable {
     case opus
     case custom(String)
 
-    // ── Model ID constants (update here when models change) ──
+    // ── Model ID constants ──
 
-    /// The model ID passed to the CLI via --model flag.
-    static let haikuModelId = "claude-haiku-4-5-20251001"
-    static let sonnetModelId = "claude-sonnet-4-6"
-    static let opusModelId = "claude-opus-4-6"
+    /// Pinned model IDs stored by older app versions, mapped back to their alias case.
+    /// The CLI now receives aliases ("opus" etc.) which it resolves to the latest version.
+    static let legacyModelIds: [String: AgentModel] = [
+        "claude-haiku-4-5-20251001": .haiku,
+        "claude-sonnet-4-6": .sonnet,
+        "claude-opus-4-6": .opus,
+    ]
 
     /// The default model used when no model is explicitly set.
     static let defaultModel: AgentModel = .opus
@@ -27,13 +30,14 @@ enum AgentModel: Codable, CaseIterable, Hashable {
         [.inherit, .haiku, .sonnet, .opus]
     }
 
-    /// The CLI model ID string (e.g. "claude-opus-4-6").
+    /// The model alias passed to the CLI via --model flag (e.g. "opus").
+    /// The CLI resolves aliases to the latest model version.
     var rawValue: String {
         switch self {
         case .inherit: return "inherit"
-        case .haiku: return Self.haikuModelId
-        case .sonnet: return Self.sonnetModelId
-        case .opus: return Self.opusModelId
+        case .haiku: return "haiku"
+        case .sonnet: return "sonnet"
+        case .opus: return "opus"
         case .custom(let value): return value
         }
     }
@@ -91,12 +95,15 @@ enum AgentModel: Codable, CaseIterable, Hashable {
 
     // ── Coding ──
 
-    /// Resolve a string (short name or full model ID) to an AgentModel.
+    /// Resolve a string (alias or legacy pinned model ID) to an AgentModel.
     static func from(_ value: String) -> AgentModel {
         for model in [AgentModel.inherit, .haiku, .sonnet, .opus] {
             if value == model.shortName || value == model.rawValue {
                 return model
             }
+        }
+        if let legacy = Self.legacyModelIds[value] {
+            return legacy
         }
         return .custom(value)
     }
@@ -106,7 +113,7 @@ enum AgentModel: Codable, CaseIterable, Hashable {
     static let codexDefaultModelId = "gpt-5.4"
     static let codexLightModelId = "gpt-5.4-mini"
 
-    /// Returns the model ID appropriate for the given CLI provider.
+    /// Returns the model ID or alias appropriate for the given CLI provider.
     func cliModelId(for provider: CLIProviderType) -> String {
         switch provider {
         case .claude:

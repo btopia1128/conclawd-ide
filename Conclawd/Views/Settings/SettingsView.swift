@@ -33,67 +33,72 @@ struct SettingsView: View {
     }
 
     var body: some View {
-        HStack(spacing: 0) {
-            // Sidebar
-            VStack(alignment: .leading, spacing: 2) {
-                ForEach(SettingsTab.allCases) { tab in
-                    HStack(spacing: 8) {
-                        Image(systemName: tab.icon)
-                            .font(.system(size: 13))
-                            .frame(width: 20)
-                            .foregroundStyle(selectedTab == tab ? Color.accentColor : Color.appSecondary)
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(alignment: .top, spacing: 0) {
+                // Sidebar
+                VStack(alignment: .leading, spacing: 2) {
+                    ForEach(SettingsTab.allCases) { tab in
+                        HStack(spacing: 8) {
+                            Image(systemName: tab.icon)
+                                .font(.system(size: 13))
+                                .frame(width: 20)
+                                .foregroundStyle(selectedTab == tab ? Color.accentColor : Color.appSecondary)
 
-                        Text(tab.displayName(l10n))
-                            .font(.system(size: 13))
+                            Text(tab.displayName(l10n))
+                                .font(.system(size: 13))
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.vertical, 7)
+                        .padding(.horizontal, 10)
+                        .background(
+                            selectedTab == tab
+                                ? Color.accentColor.opacity(0.12)
+                                : Color.clear,
+                            in: RoundedRectangle(cornerRadius: 6)
+                        )
+                        .foregroundStyle(selectedTab == tab ? .primary : Color.appSecondary)
+                        .contentShape(Rectangle())
+                        .pointingHandCursor()
+                        .onTapGesture {
+                            withAnimation(.easeInOut(duration: 0.15)) { selectedTab = tab }
+                        }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.vertical, 7)
-                    .padding(.horizontal, 10)
-                    .background(
-                        selectedTab == tab
-                            ? Color.accentColor.opacity(0.12)
-                            : Color.clear,
-                        in: RoundedRectangle(cornerRadius: 6)
-                    )
-                    .foregroundStyle(selectedTab == tab ? .primary : Color.appSecondary)
-                    .contentShape(Rectangle())
-                    .pointingHandCursor()
-                    .onTapGesture {
-                        withAnimation(.easeInOut(duration: 0.15)) { selectedTab = tab }
-                    }
+
+                    Spacer(minLength: 0)
                 }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 16)
+                .frame(width: 170)
+                .frame(maxHeight: .infinity)
+                .themedBackground(Color.appWindowBackground)
 
-                Spacer()
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 16)
-            .frame(width: 170)
-            .themedBackground(Color.appWindowBackground)
+                Divider()
 
-            Divider()
-
-            // Content
-            ScrollView {
-                VStack(alignment: .leading, spacing: 0) {
-                    switch selectedTab {
-                    case .general:
-                        GeneralSettingsSection()
-                    case .terminal:
-                        TerminalSettingsSection()
-                    case .agents:
-                        AgentSettingsSection()
-                    case .notifications:
-                        NotificationSettingsSection()
+                // Content
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 0) {
+                        switch selectedTab {
+                        case .general:
+                            GeneralSettingsSection()
+                        case .terminal:
+                            TerminalSettingsSection()
+                        case .agents:
+                            AgentSettingsSection()
+                        case .notifications:
+                            NotificationSettingsSection()
+                        }
                     }
+                    .frame(width: 640, alignment: .leading)
+                    .padding(.horizontal, 32)
+                    .padding(.vertical, 28)
                 }
-                .frame(maxWidth: 640, alignment: .leading)
-                .padding(.horizontal, 32)
-                .padding(.vertical, 28)
-                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(width: 704)
+                .frame(maxHeight: .infinity)
+                .themedBackground(Color.appWindowBackground)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .themedBackground(Color.appWindowBackground)
+            .frame(maxHeight: .infinity)
         }
+        .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
         .themedBackground(Color.appWindowBackground)
         .onHover { hovering in
             if hovering { NSCursor.arrow.push() } else { NSCursor.pop() }
@@ -501,6 +506,10 @@ private struct AgentSettingsSection: View {
     @AppStorage("maxConcurrentAgents") private var maxConcurrentAgents: Int = 0
     @AppStorage(AppState.memoryExtractionProviderKey) private var memoryProvider: String = "claude"
     @AppStorage(AppState.commitMessageProviderKey) private var commitProvider: String = "claude"
+    @AppStorage(AppState.memoryExtractionClaudeModelKey) private var memoryClaudeModel: String = "sonnet"
+    @AppStorage(AppState.memoryExtractionCodexModelKey) private var memoryCodexModel: String = "opus"
+    @AppStorage(AppState.commitMessageClaudeModelKey) private var commitClaudeModel: String = "haiku"
+    @AppStorage(AppState.commitMessageCodexModelKey) private var commitCodexModel: String = "haiku"
     @State private var skillTrackingEnabled = false
     @State private var codexSyncEnabled = false
 
@@ -520,6 +529,10 @@ private struct AgentSettingsSection: View {
                     }
                     .frame(width: 200)
                     .labelsHidden()
+                    .onAppear {
+                        // Normalize legacy pinned IDs (e.g. "claude-opus-4-6") to aliases
+                        defaultModel = AgentModel.from(defaultModel).rawValue
+                    }
                 }
 
                 Text(l10n.appliedWhenInherit)
@@ -588,27 +601,75 @@ private struct AgentSettingsSection: View {
 
             SettingsGroup(l10n.backgroundTasks) {
                 SettingsRow(l10n.memoryExtractionProvider) {
-                    Picker("", selection: $memoryProvider) {
-                        Text(l10n.createForClaudeCode).tag("claude")
-                        Text(l10n.createForCodex).tag("codex")
+                    HStack(spacing: 8) {
+                        Picker("", selection: $memoryProvider) {
+                            Text(l10n.createForClaudeCode).tag("claude")
+                            Text(l10n.createForCodex).tag("codex")
+                        }
+                        .frame(width: 130)
+                        .labelsHidden()
+
+                        if memoryProvider == "codex" {
+                            Picker("", selection: $memoryCodexModel) {
+                                ForEach(AgentModel.allCases(for: .codex).filter { $0 != .inherit }, id: \.shortName) { model in
+                                    Text(model.displayName(for: .codex)).tag(model.shortName)
+                                }
+                            }
+                            .frame(width: 130)
+                            .labelsHidden()
+                        } else {
+                            Picker("", selection: $memoryClaudeModel) {
+                                ForEach(AgentModel.allCases.filter { $0 != .inherit }, id: \.shortName) { model in
+                                    Text(model.displayName).tag(model.shortName)
+                                }
+                            }
+                            .frame(width: 130)
+                            .labelsHidden()
+                        }
                     }
-                    .frame(width: 200)
-                    .labelsHidden()
                 }
 
                 SettingsRow(l10n.commitMessageProvider) {
-                    Picker("", selection: $commitProvider) {
-                        Text(l10n.createForClaudeCode).tag("claude")
-                        Text(l10n.createForCodex).tag("codex")
+                    HStack(spacing: 8) {
+                        Picker("", selection: $commitProvider) {
+                            Text(l10n.createForClaudeCode).tag("claude")
+                            Text(l10n.createForCodex).tag("codex")
+                        }
+                        .frame(width: 130)
+                        .labelsHidden()
+
+                        if commitProvider == "codex" {
+                            Picker("", selection: $commitCodexModel) {
+                                ForEach(AgentModel.allCases(for: .codex).filter { $0 != .inherit }, id: \.shortName) { model in
+                                    Text(model.displayName(for: .codex)).tag(model.shortName)
+                                }
+                            }
+                            .frame(width: 130)
+                            .labelsHidden()
+                        } else {
+                            Picker("", selection: $commitClaudeModel) {
+                                ForEach(AgentModel.allCases.filter { $0 != .inherit }, id: \.shortName) { model in
+                                    Text(model.displayName).tag(model.shortName)
+                                }
+                            }
+                            .frame(width: 130)
+                            .labelsHidden()
+                        }
                     }
-                    .frame(width: 200)
-                    .labelsHidden()
                 }
 
                 Text(l10n.backgroundTasksDesc)
                     .font(.caption)
                     .foregroundStyle(Color.appSecondary)
                     .padding(.leading, SettingsLayout.helpTextLeading)
+
+                Button(l10n.openMemoryExtractionLog) {
+                    MemoryExtractionLog.shared.ensureFileExists()
+                    NSWorkspace.shared.open(MemoryExtractionLog.logFileURL)
+                }
+                .buttonStyle(.link)
+                .font(.caption)
+                .padding(.leading, SettingsLayout.helpTextLeading)
             }
         }
         .onAppear {

@@ -1,13 +1,26 @@
 import SwiftUI
 
-/// Sheet for creating a new skill.
-struct NewSkillSheet: View {
+/// What an AI-assisted creation session should produce.
+enum AICreationKind: String, Identifiable {
+    case agent
+    case skill
+
+    var id: String { rawValue }
+}
+
+/// Sheet for starting an AI-assisted agent/skill creation session.
+///
+/// The CLI × scope combinations used to be spelled out as separate items in the
+/// "+" menu, which grew to five entries once Codex was available. The menu now
+/// only picks auto (this sheet) vs. manual, and the target is chosen here.
+struct AICreationSheet: View {
+    let kind: AICreationKind
+
     @Environment(AppState.self) private var appState
     @Environment(\.dismiss) private var dismiss
     @Environment(\.l10n) private var l10n
 
-    @State private var name = ""
-    @State private var description = ""
+    @State private var provider: CLIProviderType = .claude
     @State private var scope: AgentScope = .project
     @State private var projectDirectory: URL?
 
@@ -16,29 +29,49 @@ struct NewSkillSheet: View {
         projectDirectory ?? appState.selectedProject?.directoryPath
     }
 
-    private var canCreate: Bool {
-        let hasName = !name.trimmingCharacters(in: .whitespaces).isEmpty
-        let hasProjectDir = scope == .user || resolvedProjectDirectory != nil
-        return hasName && hasProjectDir
+    private var hasCodexCLI: Bool {
+        appState.availableCLIProviders.contains(.codex)
+    }
+
+    private var title: String {
+        kind == .agent ? l10n.createAgentWithAI : l10n.createSkillWithAI
+    }
+
+    /// Directory the session writes into, relative to its scope root.
+    private var targetSubpath: String {
+        let root = provider == .claude ? ".claude" : ".codex"
+        return kind == .agent ? "\(root)/agents" : "\(root)/skills"
     }
 
     private var saveLocationText: String {
         if scope == .user {
-            return "~/.claude/skills/ (+ ~/.agents/skills/ symlink)"
+            return "~/\(targetSubpath)/"
         }
         if let dir = resolvedProjectDirectory {
-            return "\(dir.lastPathComponent)/.claude/skills/ (+ .agents/skills/ symlink)"
+            return "\(dir.lastPathComponent)/\(targetSubpath)/"
         }
         return l10n.notSelected
     }
 
+    private var canCreate: Bool {
+        scope == .user || resolvedProjectDirectory != nil
+    }
+
     var body: some View {
         VStack(spacing: 20) {
-            Text(l10n.newSkill)
+            Text(title)
                 .font(.headline)
 
             Form {
                 Section {
+                    if hasCodexCLI {
+                        Picker("CLI", selection: $provider) {
+                            ForEach(CLIProviderType.allCases, id: \.self) { provider in
+                                Text(provider.displayName).tag(provider)
+                            }
+                        }
+                    }
+
                     Picker(l10n.scope, selection: $scope) {
                         Text(l10n.userGlobal).tag(AgentScope.user)
                         Text(l10n.projectSpecific).tag(AgentScope.project)
@@ -72,14 +105,6 @@ struct NewSkillSheet: View {
                             .foregroundStyle(Color.appSecondary)
                     }
                 }
-
-                Section {
-                    TextField(l10n.name, text: $name)
-                        .textFieldStyle(.roundedBorder)
-
-                    TextField(l10n.description, text: $description)
-                        .textFieldStyle(.roundedBorder)
-                }
             }
             .formStyle(.grouped)
 
@@ -92,18 +117,7 @@ struct NewSkillSheet: View {
                 Spacer()
 
                 Button(l10n.create) {
-                    let sanitizedName = name
-                        .lowercased()
-                        .replacingOccurrences(of: " ", with: "-")
-                        .filter { $0.isLetter || $0.isNumber || $0 == "-" }
-
-                    guard !sanitizedName.isEmpty else { return }
-                    appState.createSkill(
-                        name: sanitizedName,
-                        description: description,
-                        scope: scope,
-                        projectDirectory: resolvedProjectDirectory
-                    )
+                    startSession()
                     dismiss()
                 }
                 .buttonStyle(.borderedProminent)
@@ -114,10 +128,24 @@ struct NewSkillSheet: View {
         .padding()
         .frame(width: 440)
         .task {
-            // Project scope is the default, but it needs a project to target.
+            // Project scope is the common case, but it needs a project to target.
             if appState.selectedProject == nil {
                 scope = .user
             }
+        }
+    }
+
+    private func startSession() {
+        let directory = scope == .project ? resolvedProjectDirectory : nil
+        switch (kind, provider) {
+        case (.agent, .claude):
+            appState.startCreationSession(scope: scope, projectDirectory: directory)
+        case (.agent, .codex):
+            appState.startCodexCreationSession(scope: scope, projectDirectory: directory)
+        case (.skill, .claude):
+            appState.startSkillCreationSession(scope: scope, projectDirectory: directory)
+        case (.skill, .codex):
+            appState.startCodexSkillCreationSession(scope: scope, projectDirectory: directory)
         }
     }
 
@@ -127,6 +155,9 @@ struct NewSkillSheet: View {
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
         panel.message = l10n.selectProjectDirectory
+        if let dir = resolvedProjectDirectory {
+            panel.directoryURL = dir
+        }
 
         if panel.runModal() == .OK, let url = panel.url {
             projectDirectory = url

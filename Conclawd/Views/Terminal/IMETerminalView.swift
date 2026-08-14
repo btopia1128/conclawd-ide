@@ -39,7 +39,10 @@ class IMETerminalView: LocalProcessTerminalView {
     override func viewDidMoveToSuperview() {
         super.viewDidMoveToSuperview()
         if superview != nil {
-            registerForDraggedTypes([.fileURL])
+            // `.URL` matters too: a drag started by SwiftUI's `.onDrag` doesn't
+            // always advertise `public.file-url`, and a view is only offered
+            // drags carrying a type it registered for.
+            registerForDraggedTypes([.fileURL, .URL])
         }
     }
 
@@ -54,21 +57,54 @@ class IMETerminalView: LocalProcessTerminalView {
     }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        guard let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [
-            .urlReadingFileURLsOnly: true
-        ]) as? [URL], !urls.isEmpty else { return false }
+        let urls = Self.droppedFileURLs(from: sender)
+        guard !urls.isEmpty else { return false }
 
-        for url in urls {
-            sendAsInput(url.path(percentEncoded: false))
-        }
+        sendAsInput(urls.map { Self.escapedPath(for: $0) }.joined(separator: " "))
         return true
     }
 
+    /// Type check only — actual data may still be promised during the drag
+    /// (SwiftUI .onDrag item providers deliver data at drop time), so reading
+    /// objects here would reject in-app drags from the file tree.
     private func hasFileURLs(in info: NSDraggingInfo) -> Bool {
-        guard let urls = info.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [
+        if info.draggingPasteboard.availableType(from: [.fileURL, .URL]) != nil { return true }
+        return info.draggingSource != nil && FileDragSession.isActive
+    }
+
+    /// Resolve the dropped items, preferring the pasteboard (Finder and other
+    /// apps) and falling back to the in-flight file tree drag, whose promised
+    /// pasteboard data isn't delivered synchronously here. `draggingSource` is
+    /// non-nil only for drags started inside this process, which keeps the
+    /// fallback from firing on an external drop.
+    static func droppedFileURLs(from info: NSDraggingInfo) -> [URL] {
+        let urls = fileURLs(from: info.draggingPasteboard)
+        if !urls.isEmpty {
+            FileDragSession.consume()
+            return urls
+        }
+        guard info.draggingSource != nil else { return [] }
+        return FileDragSession.consume()
+    }
+
+    static func fileURLs(from pasteboard: NSPasteboard) -> [URL] {
+        if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [
             .urlReadingFileURLsOnly: true
-        ]) as? [URL] else { return false }
-        return !urls.isEmpty
+        ]) as? [URL], !urls.isEmpty {
+            return urls
+        }
+        // Fallback: raw file-url strings, for providers the object read misses
+        return (pasteboard.pasteboardItems ?? []).compactMap { item in
+            item.string(forType: .fileURL).flatMap { URL(string: $0) }
+        }.filter(\.isFileURL)
+    }
+
+    /// Backslash-escape spaces (and existing backslashes) the way Terminal.app
+    /// does, so a dropped path stays usable as a single argument.
+    static func escapedPath(for url: URL) -> String {
+        url.path(percentEncoded: false)
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: " ", with: "\\ ")
     }
 
     /// Send text to the terminal process using bracketed paste when available,

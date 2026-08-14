@@ -8,7 +8,7 @@ struct CloudTriggerEditorView: View {
     @State private var editingName: String = ""
     @State private var editingCron: String = ""
     @State private var editingPrompt: String = ""
-    @State private var editingModel: String = "claude-sonnet-4-6"
+    @State private var editingModel: String = "sonnet"
     @State private var editingEnvironmentId: String = "default"
     @State private var lastSyncedTriggerId: String?
     @State private var isSaving = false
@@ -52,7 +52,8 @@ struct CloudTriggerEditorView: View {
         editingName = trigger.name
         editingCron = trigger.cronExpression
         editingPrompt = trigger.prompt ?? ""
-        editingModel = trigger.model ?? "claude-sonnet-4-6"
+        // Normalize legacy pinned IDs (e.g. "claude-sonnet-4-6") to aliases so the picker matches
+        editingModel = AgentModel.from(trigger.model ?? "sonnet").rawValue
         editingEnvironmentId = trigger.environmentId
         errorMessage = nil
     }
@@ -159,9 +160,9 @@ struct CloudTriggerEditorView: View {
 
                 detailRow(l10n.model) {
                     Picker("", selection: $editingModel) {
-                        Text("Sonnet").tag("claude-sonnet-4-6")
-                        Text("Opus").tag("claude-opus-4-6")
-                        Text("Haiku").tag("claude-haiku-4-5-20251001")
+                        Text("Sonnet").tag("sonnet")
+                        Text("Opus").tag("opus")
+                        Text("Haiku").tag("haiku")
                     }
                     .labelsHidden()
                     .controlSize(.small)

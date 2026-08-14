@@ -119,7 +119,7 @@ struct CloudTriggerCreateRequest: Codable {
         cronExpression: String,
         enabled: Bool = true,
         prompt: String,
-        model: String = "claude-sonnet-4-6",
+        model: String = "sonnet",
         environmentId: String = "default",
         allowedTools: [String] = ["Bash", "Read", "Write", "Edit", "Glob", "Grep", "WebFetch", "WebSearch"]
     ) -> CloudTriggerCreateRequest {

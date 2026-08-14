@@ -25,8 +25,12 @@ actor MemoryExtractor {
         }
         let fallback: CLIProviderType = provider == .claude ? .codex : .claude
         if let path = cliPathResolver.resolve(for: fallback) {
+            MemoryExtractionLog.shared.warn(
+                "\(provider.binaryName) CLI not found — falling back to \(fallback.binaryName) (\(path))")
             return (path, fallback)
         }
+        MemoryExtractionLog.shared.error(
+            "No CLI binary found for extraction (tried \(provider.binaryName) and \(fallback.binaryName))")
         return nil
     }
 
@@ -38,15 +42,20 @@ actor MemoryExtractor {
         jsonlPath: URL,
         agentName: String,
         agent: Agent,
-        provider: CLIProviderType = .claude
+        provider: CLIProviderType = .claude,
+        model: AgentModel = .sonnet
     ) async {
         logger.info("[\(agentName)] Extracting memories from transcript: \(jsonlPath.lastPathComponent)")
+        MemoryExtractionLog.shared.log(
+            "[\(agentName)] Start: transcript \(jsonlPath.lastPathComponent), provider \(provider.binaryName), model \(model.shortName)")
 
         let lastOffset = loadLastOffset(jsonlPath: jsonlPath, agent: agent)
         let (conversation, totalLines) = parseTranscript(at: jsonlPath, fromLine: lastOffset)
 
         guard !conversation.isEmpty else {
             logger.info("[\(agentName)] No new conversation content (offset \(lastOffset), total \(totalLines) lines)")
+            MemoryExtractionLog.shared.log(
+                "[\(agentName)] Skipped: no new conversation content (offset \(lastOffset), total \(totalLines) lines)")
             // Still update offset so we don't re-scan empty lines
             if totalLines > lastOffset {
                 saveLastOffset(totalLines, jsonlPath: jsonlPath, agent: agent)
@@ -69,7 +78,7 @@ actor MemoryExtractor {
         // Layer 1: LLM-based memory extraction
         var extractionSucceeded = true
         if agent.memoryExtractionEnabled {
-            extractionSucceeded = await runExtraction(conversation: conversation, agentName: agentName, agent: agent, provider: provider)
+            extractionSucceeded = await runExtraction(conversation: conversation, agentName: agentName, agent: agent, provider: provider, model: model)
         }
 
         // Only record offset if extraction succeeded (or was disabled).
@@ -78,6 +87,7 @@ actor MemoryExtractor {
             saveLastOffset(totalLines, jsonlPath: jsonlPath, agent: agent)
         } else {
             logger.warning("[\(agentName)] Skipping offset update due to extraction failure — will retry")
+            MemoryExtractionLog.shared.warn("[\(agentName)] Offset not advanced — content will be retried next time")
         }
     }
 
@@ -86,7 +96,8 @@ actor MemoryExtractor {
         terminalText: String,
         agentName: String,
         agent: Agent,
-        provider: CLIProviderType = .claude
+        provider: CLIProviderType = .claude,
+        model: AgentModel = .sonnet
     ) async {
         guard agent.memoryExtractionEnabled else {
             logger.info("[\(agentName)] Extraction disabled, skipping terminal text extraction")
@@ -94,14 +105,17 @@ actor MemoryExtractor {
         }
 
         logger.info("[\(agentName)] Fallback: extracting from terminal text (\(terminalText.count) chars)")
+        MemoryExtractionLog.shared.log(
+            "[\(agentName)] Start: terminal text fallback (\(terminalText.count) chars), provider \(provider.binaryName), model \(model.shortName)")
 
         let cleanText = stripANSI(terminalText)
         guard cleanText.count >= 500 else {
             logger.info("[\(agentName)] Skipped: text too short (\(cleanText.count) < 500)")
+            MemoryExtractionLog.shared.log("[\(agentName)] Skipped: terminal text too short (\(cleanText.count) < 500 chars)")
             return
         }
 
-        await runExtraction(conversation: cleanText, agentName: agentName, agent: agent, provider: provider)
+        await runExtraction(conversation: cleanText, agentName: agentName, agent: agent, provider: provider, model: model)
     }
 
     // MARK: - JSONL Transcript Parsing
@@ -168,31 +182,38 @@ actor MemoryExtractor {
 
     /// Returns `true` if extraction succeeded (even with 0 results), `false` if the LLM call failed.
     @discardableResult
-    private func runExtraction(conversation: String, agentName: String, agent: Agent, provider: CLIProviderType = .claude) async -> Bool {
+    private func runExtraction(conversation: String, agentName: String, agent: Agent, provider: CLIProviderType = .claude, model: AgentModel = .sonnet) async -> Bool {
         let existingIndex = memoryService.loadMemoryIndex(for: agent)
 
         do {
             let actions = try await callExtractionLLM(
                 conversation: conversation,
                 existingMemories: existingIndex,
-                provider: provider
+                provider: provider,
+                model: model
             )
             logger.info("[\(agentName)] LLM returned \(actions.count) memory action(s)")
+            MemoryExtractionLog.shared.log("[\(agentName)] LLM returned \(actions.count) memory action(s)")
 
             for action in actions {
                 do {
                     try memoryService.applyMemoryAction(action, for: agent)
                     logger.info("[\(agentName)] Applied action: \(String(describing: action))")
+                    MemoryExtractionLog.shared.log("[\(agentName)] Applied: \(String(describing: action).prefix(200))")
                 } catch {
                     logger.error("[\(agentName)] Failed to apply action: \(error.localizedDescription)")
+                    MemoryExtractionLog.shared.error(
+                        "[\(agentName)] Failed to apply action: \(error.localizedDescription)")
                 }
             }
 
             try memoryService.rebuildIndex(for: agent)
             logger.info("[\(agentName)] Index rebuilt successfully")
+            MemoryExtractionLog.shared.log("[\(agentName)] Done: index rebuilt")
             return true
         } catch {
             logger.error("[\(agentName)] LLM extraction failed: \(error.localizedDescription)")
+            MemoryExtractionLog.shared.error("[\(agentName)] Extraction failed: \(error.localizedDescription)")
             return false
         }
     }
@@ -248,6 +269,7 @@ actor MemoryExtractor {
 
         guard FileManager.default.fileExists(atPath: jsonlPath.path(percentEncoded: false)) else {
             logger.warning("Transcript not found: \(jsonlPath.path(percentEncoded: false))")
+            MemoryExtractionLog.shared.warn("Transcript not found: \(jsonlPath.path(percentEncoded: false))")
             return nil
         }
 
@@ -266,11 +288,14 @@ actor MemoryExtractor {
     private func callExtractionLLM(
         conversation: String,
         existingMemories: String,
-        provider: CLIProviderType = .claude
+        provider: CLIProviderType = .claude,
+        model: AgentModel = .sonnet
     ) async throws -> [MemoryAction] {
         guard let cli = resolveExtractionCLI(preferring: provider) else {
             logger.warning("No CLI path found for extraction, skipping")
-            return []
+            // Throw instead of returning [] — a missing CLI must not be recorded
+            // as a successful extraction (which would advance the offset).
+            throw MemoryExtractorError.cliNotFound
         }
 
         // Truncate from start, keeping the most recent conversation
@@ -287,15 +312,18 @@ actor MemoryExtractor {
             existingMemories: existingMemories
         )
 
-        logger.info("Calling \(cli.provider.binaryName) extraction (prompt length: \(prompt.count) chars)")
+        logger.info("Calling \(cli.provider.binaryName) extraction (prompt length: \(prompt.count) chars, model: \(model.shortName))")
+        MemoryExtractionLog.shared.log(
+            "Calling \(cli.provider.binaryName) at \(cli.path) (model \(model.shortName), prompt \(prompt.count) chars)")
         let result = try await executeCLIExtraction(
             cliPath: cli.path,
             provider: cli.provider,
+            model: model,
             prompt: prompt
         )
         logger.info("\(cli.provider.binaryName) returned \(result.count) bytes")
 
-        return parseExtractionResult(result, provider: cli.provider)
+        return try parseExtractionResult(result, provider: cli.provider)
     }
 
     private func buildExtractionPrompt(conversation: String, existingMemories: String) -> String {
@@ -341,7 +369,7 @@ actor MemoryExtractor {
         """
     }
 
-    private func executeCLIExtraction(cliPath: String, provider: CLIProviderType, prompt: String) async throws -> Data {
+    private func executeCLIExtraction(cliPath: String, provider: CLIProviderType, model: AgentModel, prompt: String) async throws -> Data {
         let process = Process()
         let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
         let escapedCli = cliPath.replacingOccurrences(of: " ", with: "\\ ")
@@ -351,46 +379,73 @@ actor MemoryExtractor {
         try prompt.write(to: tempFile, atomically: true, encoding: .utf8)
         defer { try? FileManager.default.removeItem(at: tempFile) }
 
+        let resolvedModel: AgentModel = model == .inherit ? .sonnet : model
         let command: String
         switch provider {
         case .claude:
-            command = "cat '\(tempFile.path(percentEncoded: false))' | \(escapedCli) -p --model \(AgentModel.sonnet.cliModelId(for: .claude)) --output-format json --tools \"\""
+            command = "cat '\(tempFile.path(percentEncoded: false))' | \(escapedCli) -p --model \(resolvedModel.cliModelId(for: .claude)) --output-format json --tools \"\""
         case .codex:
-            command = "cat '\(tempFile.path(percentEncoded: false))' | \(escapedCli) exec --ephemeral --sandbox read-only --json -m \(AgentModel.sonnet.cliModelId(for: .codex)) -"
+            command = "cat '\(tempFile.path(percentEncoded: false))' | \(escapedCli) exec --ephemeral --sandbox read-only --skip-git-repo-check --color never --json -m \(resolvedModel.cliModelId(for: .codex)) -"
         }
 
         process.executableURL = URL(fileURLWithPath: shell)
         process.arguments = ["-l", "-c", command]
+        process.environment = CLIPathResolver.augmentedEnvironment(cliPath: cliPath)
+
+        MemoryExtractionLog.shared.log("Executing: \(command)")
 
         let stdout = Pipe()
         let stderr = Pipe()
         process.standardOutput = stdout
         process.standardError = stderr
-        // Drain stderr to prevent buffer deadlock (64KB limit)
-        stderr.fileHandleForReading.readabilityHandler = { handle in _ = handle.availableData }
+        // Drain both pipes incrementally to prevent buffer deadlock (64KB limit),
+        // buffering the contents so failures can report actual stderr output.
+        let stdoutBuffer = PipeBuffer()
+        let stderrBuffer = PipeBuffer()
+        stdout.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            if !data.isEmpty { stdoutBuffer.append(data) }
+        }
+        stderr.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            if !data.isEmpty { stderrBuffer.append(data) }
+        }
 
         try process.run()
 
         return try await withCheckedThrowingContinuation { continuation in
             process.terminationHandler = { _ in
+                stdout.fileHandleForReading.readabilityHandler = nil
                 stderr.fileHandleForReading.readabilityHandler = nil
-                let data = stdout.fileHandleForReading.readDataToEndOfFile()
+                stdoutBuffer.append(stdout.fileHandleForReading.readDataToEndOfFile())
+                stderrBuffer.append(stderr.fileHandleForReading.readDataToEndOfFile())
+
+                let data = stdoutBuffer.contents
                 if process.terminationStatus == 0 {
+                    MemoryExtractionLog.shared.log(
+                        "\(provider.binaryName) exited 0, stdout \(data.count) bytes")
                     continuation.resume(returning: data)
                 } else {
-                    let stderrData = stderr.fileHandleForReading.readDataToEndOfFile()
-                    let stderrStr = String(data: stderrData, encoding: .utf8) ?? "(no stderr)"
-                    logger.error("\(provider.binaryName) extraction failed (exit \(process.terminationStatus)): \(stderrStr)")
-                    continuation.resume(throwing: MemoryExtractorError.extractionFailed)
+                    let stderrStr = String(data: stderrBuffer.contents, encoding: .utf8)?
+                        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                    let detail = stderrStr.isEmpty ? "(no stderr)" : String(stderrStr.suffix(1000))
+                    logger.error("\(provider.binaryName) extraction failed (exit \(process.terminationStatus)): \(detail)")
+                    MemoryExtractionLog.shared.error(
+                        "\(provider.binaryName) exited \(process.terminationStatus): \(detail)")
+                    continuation.resume(throwing: MemoryExtractorError.processFailed(
+                        exitCode: process.terminationStatus, stderr: detail))
                 }
             }
         }
     }
 
-    private func parseExtractionResult(_ data: Data, provider: CLIProviderType = .claude) -> [MemoryAction] {
+    /// Throws on malformed output so the failure is logged and the offset is retried —
+    /// a genuinely empty `{"memories": []}` response is the only way to get `[]` back.
+    private func parseExtractionResult(_ data: Data, provider: CLIProviderType = .claude) throws -> [MemoryAction] {
         guard var jsonString = String(data: data, encoding: .utf8) else {
             logger.error("Failed to decode extraction result as UTF-8")
-            return []
+            MemoryExtractionLog.shared.error("Output is not valid UTF-8 (\(data.count) bytes)")
+            throw MemoryExtractorError.outputNotUTF8
         }
 
         logger.info("Raw extraction result (\(provider.binaryName)): \(jsonString.prefix(500))")
@@ -403,6 +458,9 @@ actor MemoryExtractor {
                let resultStr = outerDict["result"] as? String {
                 jsonString = resultStr
                 logger.info("Unwrapped CLI JSON wrapper, inner result: \(jsonString.prefix(300))")
+            } else {
+                MemoryExtractionLog.shared.warn(
+                    "claude output had no {\"result\": ...} wrapper — parsing raw output: \(jsonString.prefix(200))")
             }
 
         case .codex:
@@ -422,22 +480,28 @@ actor MemoryExtractor {
                 extractedText = text
                 break
             }
-            if let text = extractedText {
-                jsonString = text
-                logger.info("Extracted text from Codex JSONL: \(jsonString.prefix(300))")
+            guard let text = extractedText else {
+                // No agent_message event — likely a codex version whose --json event
+                // schema differs from item.completed/agent_message, or an aborted run.
+                MemoryExtractionLog.shared.error(
+                    "codex JSONL had no item.completed/agent_message event. Raw output: \(jsonString.prefix(500))")
+                throw MemoryExtractorError.noAgentMessage
             }
+            jsonString = text
+            logger.info("Extracted text from Codex JSONL: \(jsonString.prefix(300))")
         }
 
         // Strip markdown code fences if present
         if let jsonStart = jsonString.range(of: "{"),
            let jsonEnd = jsonString.range(of: "}", options: .backwards) {
-            jsonString = String(jsonString[jsonStart.lowerBound...jsonEnd.upperBound])
+            jsonString = String(jsonString[jsonStart.lowerBound..<jsonEnd.upperBound])
         }
 
         guard let jsonData = jsonString.data(using: .utf8),
               let response = try? JSONDecoder().decode(MemoryExtractionResponse.self, from: jsonData) else {
             logger.error("Failed to parse extraction JSON: \(jsonString.prefix(300))")
-            return []
+            MemoryExtractionLog.shared.error("Failed to parse extraction JSON: \(jsonString.prefix(300))")
+            throw MemoryExtractorError.invalidJSON(preview: String(jsonString.prefix(200)))
         }
 
         let actions = response.memories.compactMap { $0.toMemoryAction() }
@@ -477,6 +541,46 @@ actor MemoryExtractor {
 
 // MARK: - Errors
 
-enum MemoryExtractorError: Error {
-    case extractionFailed
+enum MemoryExtractorError: Error, LocalizedError {
+    case cliNotFound
+    case processFailed(exitCode: Int32, stderr: String)
+    case outputNotUTF8
+    case noAgentMessage
+    case invalidJSON(preview: String)
+
+    var errorDescription: String? {
+        switch self {
+        case .cliNotFound:
+            return "No CLI binary found (claude/codex)"
+        case .processFailed(let exitCode, let stderr):
+            return "CLI exited with code \(exitCode): \(stderr)"
+        case .outputNotUTF8:
+            return "CLI output was not valid UTF-8"
+        case .noAgentMessage:
+            return "codex JSONL output contained no agent_message event"
+        case .invalidJSON(let preview):
+            return "Extraction result was not valid JSON: \(preview)"
+        }
+    }
+}
+
+// MARK: - Pipe Buffer
+
+/// Thread-safe accumulator for pipe output read via readabilityHandler.
+private final class PipeBuffer: @unchecked Sendable {
+    private let lock = NSLock()
+    private var data = Data()
+
+    func append(_ chunk: Data) {
+        guard !chunk.isEmpty else { return }
+        lock.lock()
+        data.append(chunk)
+        lock.unlock()
+    }
+
+    var contents: Data {
+        lock.lock()
+        defer { lock.unlock() }
+        return data
+    }
 }

@@ -28,7 +28,10 @@ struct TopBarView: View {
                 Spacer()
 
                 Button {
-                    withAnimation { showSidebar.toggle() }
+                    // Toggle instantly (no withAnimation): an animated width change
+                    // resizes the center pane every frame, forcing SwiftTerm to reflow
+                    // its scrollback on each frame — very heavy with long history.
+                    showSidebar.toggle()
                 } label: {
                     Image(systemName: "sidebar.left")
                         .font(.system(size: 11))
@@ -50,7 +53,8 @@ struct TopBarView: View {
                 .help(appState.secondaryPane == nil ? "Split editor" : "Close split")
 
                 Button {
-                    withAnimation { showInspector.toggle() }
+                    // Instant toggle — see showSidebar above for why we avoid animating.
+                    showInspector.toggle()
                 } label: {
                     Image(systemName: "sidebar.right")
                         .font(.system(size: 11))

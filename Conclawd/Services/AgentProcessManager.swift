@@ -92,6 +92,7 @@ final class AgentProcessManager {
         let process = AgentProcess(agentId: sessionId)
         process.pid = terminalView.process.shellPid
         process.status = .running
+        logLifecycle("start", sessionId: sessionId, pid: process.pid)
         processes[sessionId] = process
         terminalViews[sessionId] = terminalView
 
@@ -135,6 +136,7 @@ final class AgentProcessManager {
         let process = AgentProcess(agentId: sessionId)
         process.pid = terminalView.process.shellPid
         process.status = .running
+        logLifecycle("start", sessionId: sessionId, pid: process.pid)
         processes[sessionId] = process
         terminalViews[sessionId] = terminalView
         lastDataReceived[sessionId] = startTime
@@ -236,6 +238,7 @@ final class AgentProcessManager {
         let process = AgentProcess(agentId: sessionId) // use sessionId as sentinel
         process.pid = terminalView.process.shellPid
         process.status = .running
+        logLifecycle("start", sessionId: sessionId, pid: process.pid)
         process.cliProviderType = provider
         processes[sessionId] = process
         terminalViews[sessionId] = terminalView
@@ -278,6 +281,7 @@ final class AgentProcessManager {
         let process = AgentProcess(agentId: sessionId) // sentinel — no real agent
         process.pid = terminalView.process.shellPid
         process.status = .running
+        logLifecycle("start", sessionId: sessionId, pid: process.pid)
         processes[sessionId] = process
         terminalViews[sessionId] = terminalView
         lastDataReceived[sessionId] = Date()
@@ -398,6 +402,7 @@ final class AgentProcessManager {
         let process = AgentProcess(agentId: agent.id)
         process.pid = terminalView.process.shellPid
         process.status = .running
+        logLifecycle("start", sessionId: sessionId, pid: process.pid)
         process.cliProviderType = provider
         processes[sessionId] = process
         terminalViews[sessionId] = terminalView
@@ -497,6 +502,7 @@ final class AgentProcessManager {
         process.pid = terminalView.process.shellPid
         process.status = .running
         process.stoppedAt = nil
+        logLifecycle("start", sessionId: sessionId, pid: process.pid)
         terminalViews[sessionId] = terminalView
 
         lastDataReceived[sessionId] = Date()
@@ -577,6 +583,7 @@ final class AgentProcessManager {
         let process = AgentProcess(agentId: sourceProcess.agentId)
         process.pid = terminalView.process.shellPid
         process.status = .running
+        logLifecycle("start", sessionId: newSessionId, pid: process.pid)
         process.cliProviderType = provider
         processes[newSessionId] = process
         terminalViews[newSessionId] = terminalView
@@ -657,6 +664,7 @@ final class AgentProcessManager {
         let process = AgentProcess(agentId: agentId)
         process.pid = terminalView.process.shellPid
         process.status = .running
+        logLifecycle("start", sessionId: newSessionId, pid: process.pid)
         process.cliProviderType = provider
         processes[newSessionId] = process
         terminalViews[newSessionId] = terminalView
@@ -936,6 +944,13 @@ final class AgentProcessManager {
 
     func handleProcessTerminated(sessionId: UUID, exitCode: Int32?) {
         guard let process = processes[sessionId] else { return }
+        // Status before overwrite distinguishes an expected death (we already
+        // marked it .stopped via stop()) from a spontaneous one (.running).
+        let wasExpected = !process.status.isActive
+        SessionDiagnosticsLog.shared.log(
+            "terminated (\(wasExpected ? "after stop" : "SPONTANEOUS")) "
+            + "session=\(sessionId) pid=\(process.pid) "
+            + SessionDiagnosticsLog.describeExitCode(exitCode))
         process.status = .stopped(exitCode: exitCode)
         process.stoppedAt = Date()
 
@@ -998,11 +1013,21 @@ final class AgentProcessManager {
         return nil
     }
 
+    // MARK: - Diagnostics
+
+    /// Records a lifecycle event for a session process. `function` defaults to
+    /// the caller, so start sites are attributed automatically.
+    private func logLifecycle(_ event: String, sessionId: UUID, pid: pid_t, function: String = #function) {
+        SessionDiagnosticsLog.shared.log("\(event) via \(function) session=\(sessionId) pid=\(pid)")
+    }
+
     // MARK: - Stop / Kill
 
-    func stop(sessionId: UUID) {
+    func stop(sessionId: UUID, reason: String) {
         guard let process = processes[sessionId], process.status.isActive else { return }
 
+        SessionDiagnosticsLog.shared.log(
+            "SIGTERM (reason: \(reason)) session=\(sessionId) pid=\(process.pid)")
         if process.pid > 0 {
             kill(process.pid, SIGTERM)
         }
@@ -1012,9 +1037,11 @@ final class AgentProcessManager {
         lastDataReceived.removeValue(forKey: sessionId)
     }
 
-    func forceKill(sessionId: UUID) {
+    func forceKill(sessionId: UUID, reason: String) {
         guard let process = processes[sessionId], process.status.isActive else { return }
 
+        SessionDiagnosticsLog.shared.log(
+            "SIGKILL (reason: \(reason)) session=\(sessionId) pid=\(process.pid)")
         if process.pid > 0 {
             kill(process.pid, SIGKILL)
         }
@@ -1042,6 +1069,11 @@ final class AgentProcessManager {
     }
 
     func removeProcess(sessionId: UUID) {
+        if let process = processes[sessionId] {
+            SessionDiagnosticsLog.shared.log(
+                "removeProcess session=\(sessionId) pid=\(process.pid) "
+                + "stillActive=\(process.status.isActive)")
+        }
         if let terminalView = terminalViews[sessionId] {
             terminalView.removeFromSuperview()
         }
@@ -1102,7 +1134,7 @@ final class AgentProcessManager {
     func terminateAll() {
         stopIdleTimer()
         for (sessionId, process) in processes where process.status.isActive {
-            stop(sessionId: sessionId)
+            stop(sessionId: sessionId, reason: "terminateAll")
         }
     }
 
@@ -1219,22 +1251,77 @@ final class AgentProcessManager {
 
     private func buildEnvironment() -> [String] {
         var env = Terminal.getEnvironmentVariables(termName: "xterm-256color", trueColor: true)
+        // Augmented PATH ensures npm-installed shims like `codex` can always
+        // find their `node` interpreter even when the app was launched from
+        // Finder and did not inherit terminal-specific PATH entries.
+        env.append("PATH=\(CLIPathResolver.augmentedPATH())")
         env.append("FORCE_COLOR=1")
+        // Session-control integration: lets in-session Claude ask the app to
+        // split a topic into a new session tab (conclawd-session-split skill).
+        if let helperPath = Self.sessionControlCLIPath {
+            env.append("CONCLAWD_CLI=\(helperPath)")
+        }
+        env.append("CONCLAWD_SOCKET=\(SessionControlProtocol.defaultSocketPath)")
         return env
     }
+
+    /// Path to the bundled `conclawd` helper CLI, if present in the app bundle.
+    private static let sessionControlCLIPath: String? = {
+        let url = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/conclawd")
+        let path = url.path(percentEncoded: false)
+        return FileManager.default.fileExists(atPath: path) ? path : nil
+    }()
 
     // MARK: - Claude Agent Args Builder
 
     /// Builds CLI arguments for launching an agent session with Claude.
     private func buildClaudeAgentArgs(agent: Agent, effectiveModel: AgentModel, memoryContext: String?, env: inout [String]) -> [String] {
-        var args = ["--agent", agent.name]
+        var args: [String] = []
+
+        // `claude --agent <name>` only works when the CLI can discover the
+        // agent's definition, which requires a non-empty `description` in the
+        // frontmatter AND the .md file to exist on disk. Otherwise the CLI
+        // reports `--agent '<name>' not found. Available agents: ...`.
+        // When the agent isn't discoverable, fall back to launching without
+        // `--agent` and injecting the agent's settings (system prompt, tools)
+        // directly via flags so the session still starts.
+        let fileExists = agent.filePath.map {
+            FileManager.default.fileExists(atPath: $0.path(percentEncoded: false))
+        } ?? false
+        let isDiscoverable = !agent.description.isEmpty && fileExists
+
+        if isDiscoverable {
+            args += ["--agent", agent.name]
+        } else {
+            print("[AgentProcessManager] Agent '\(agent.name)' not discoverable via --agent "
+                + "(description empty: \(agent.description.isEmpty), file exists: \(fileExists)); "
+                + "falling back to inline system prompt injection")
+            if !agent.tools.isEmpty {
+                args += ["--allowedTools", agent.tools.joined(separator: ",")]
+            }
+            if !agent.disallowedTools.isEmpty {
+                args += ["--disallowedTools", agent.disallowedTools.joined(separator: ",")]
+            }
+        }
+
         if effectiveModel != .inherit {
             args += ["--model", effectiveModel.cliModelId(for: .claude)]
         }
         args += agent.permissionMode.cliArgs(for: .claude)
 
+        // Assemble the appended system prompt. In the fallback path the agent's
+        // own system prompt must be injected here (normally `--agent` carries
+        // it); memory context is appended in both paths.
+        var appendParts: [String] = []
+        if !isDiscoverable, !agent.systemPrompt.isEmpty {
+            appendParts.append(agent.systemPrompt)
+        }
         if let memoryContext, !memoryContext.isEmpty {
-            env.append("_AGENT_TERMINAL_APPEND_PROMPT=\(memoryContext)")
+            appendParts.append(memoryContext)
+        }
+        if !appendParts.isEmpty {
+            let combined = appendParts.joined(separator: "\n\n---\n\n")
+            env.append("_AGENT_TERMINAL_APPEND_PROMPT=\(combined)")
             args += ["--append-system-prompt", "$_AGENT_TERMINAL_APPEND_PROMPT"]
         }
         return args
@@ -1312,6 +1399,8 @@ final class AgentProcessManager {
     /// Build MCP config arguments for the Conclawd MCP server.
     /// For Claude: returns ["--mcp-config", path]. For Codex: returns ["-c", "key=value", ...].
     private func buildMcpConfigArgs(memoryDbPath: String?, agentName: String, sessionId: UUID, provider: CLIProviderType = .claude) -> [String] {
+        let nodeCommand = cliPathResolver.resolveBinary(named: "node") ?? "node"
+
         // Resolve the MCP server entry point (built JS)
         let mcpServerPath = Bundle.main.resourceURL?
             .deletingLastPathComponent()  // Contents/Resources → Contents/
@@ -1346,7 +1435,7 @@ final class AgentProcessManager {
             "mcpServers": [
                 "conclawd-memory": [
                     "type": "stdio",
-                    "command": "node",
+                    "command": nodeCommand,
                     "args": [resolvedPath],
                     "env": env,
                 ]
@@ -1359,7 +1448,7 @@ final class AgentProcessManager {
                 "mcpServers": [
                     "conclawd-memory": [
                         "type": "stdio",
-                        "command": "node",
+                        "command": nodeCommand,
                         "args": [resolvedPath],
                         "env": env,
                     ]
@@ -1378,8 +1467,9 @@ final class AgentProcessManager {
         case .codex:
             // Codex uses -c key=value (TOML syntax) for per-session MCP config
             let escapedPath = resolvedPath.replacingOccurrences(of: "\"", with: "\\\"")
+            let escapedNodeCommand = nodeCommand.replacingOccurrences(of: "\"", with: "\\\"")
             var configArgs = [
-                "-c", "mcp_servers.conclawd-memory.command=\"node\"",
+                "-c", "mcp_servers.conclawd-memory.command=\"\(escapedNodeCommand)\"",
                 "-c", "mcp_servers.conclawd-memory.args=[\"\(escapedPath)\"]",
             ]
             for (key, value) in env {

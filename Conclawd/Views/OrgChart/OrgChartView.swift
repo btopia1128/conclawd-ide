@@ -4,10 +4,12 @@ import SwiftUI
 /// The toolbar controls (Auto Layout, filter, stats) are shown in the tab bar by TerminalTabView.
 struct OrgChartView: View {
     @Environment(AppState.self) private var appState
+    @Environment(\.l10n) private var l10n
     var viewModel: OrgChartViewModel
     var filter: OrgChartFilter
     @Binding var showGlobalAgents: Bool
     @State private var showingNewAgent = false
+    @State private var showingAICreation = false
     @State private var isAddButtonHovered = false
 
     var body: some View {
@@ -37,31 +39,25 @@ struct OrgChartView: View {
         .sheet(isPresented: $showingNewAgent) {
             NewAgentSheet()
         }
+        .sheet(isPresented: $showingAICreation) {
+            AICreationSheet(kind: .agent)
+        }
     }
 
     // MARK: - Floating Add Button
 
     private var addAgentButton: some View {
         Menu {
-            Section("Create with AI") {
-                Button {
-                    appState.startCreationSession(scope: .user)
-                } label: {
-                    Label("User (Global)", systemImage: "person")
-                }
-                Button {
-                    pickProjectDirectoryForAICreation()
-                } label: {
-                    Label("Project (Specific)", systemImage: "folder")
-                }
+            Button {
+                showingAICreation = true
+            } label: {
+                Label(l10n.createWithAI, systemImage: "sparkles")
             }
 
-            Section {
-                Button {
-                    showingNewAgent = true
-                } label: {
-                    Label("Create Manually", systemImage: "square.and.pencil")
-                }
+            Button {
+                showingNewAgent = true
+            } label: {
+                Label(l10n.createManually, systemImage: "square.and.pencil")
             }
         } label: {
             HStack(spacing: 6) {
@@ -107,17 +103,4 @@ struct OrgChartView: View {
         .buttonStyle(.plain)
     }
 
-    // MARK: - Directory Picker
-
-    private func pickProjectDirectoryForAICreation() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = false
-        panel.message = "Select project directory (will create .claude/agents/ inside)"
-
-        if panel.runModal() == .OK, let url = panel.url {
-            appState.startCreationSession(scope: .project, projectDirectory: url)
-        }
-    }
 }

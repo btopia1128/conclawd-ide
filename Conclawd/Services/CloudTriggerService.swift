@@ -127,10 +127,11 @@ final class CloudTriggerService {
             .appending(path: "cloud_trigger_\(UUID().uuidString.prefix(8)).txt")
         try prompt.write(to: tempFile, atomically: true, encoding: .utf8)
 
-        let command = "cat '\(tempFile.path(percentEncoded: false))' | \(escapedClaude) -p --tools \"RemoteTrigger\" --output-format json --setting-sources \"\" --model \(AgentModel.haikuModelId)"
+        let command = "cat '\(tempFile.path(percentEncoded: false))' | \(escapedClaude) -p --tools \"RemoteTrigger\" --output-format json --setting-sources \"\" --model \(AgentModel.haiku.cliModelId(for: .claude))"
 
         process.executableURL = URL(fileURLWithPath: shell)
         process.arguments = ["-l", "-c", command]
+        process.environment = CLIPathResolver.augmentedEnvironment(cliPath: claudePath)
 
         let stdout = Pipe()
         let stderr = Pipe()
@@ -197,7 +198,7 @@ final class CloudTriggerService {
 
     nonisolated private static func buildCreatePrompt(_ request: CloudTriggerCreateRequest) -> String {
         let prompt = request.jobConfig.ccr.events?.first?.data?.message?.content ?? ""
-        let model = request.jobConfig.ccr.sessionContext?.model ?? "claude-sonnet-4-6"
+        let model = request.jobConfig.ccr.sessionContext?.model ?? "sonnet"
         let envId = request.jobConfig.ccr.environmentId ?? "default"
         let escapedPrompt = prompt.replacingOccurrences(of: "\"", with: "\\\"")
         return """
@@ -214,7 +215,7 @@ final class CloudTriggerService {
 
     nonisolated private static func buildUpdatePrompt(_ trigger: CloudTrigger) -> String {
         let prompt = trigger.prompt ?? ""
-        let model = trigger.model ?? "claude-sonnet-4-6"
+        let model = trigger.model ?? "sonnet"
         let escapedPrompt = prompt.replacingOccurrences(of: "\"", with: "\\\"")
         return """
         Call RemoteTrigger with action "update" and trigger_id "\(trigger.id)". Update:

@@ -217,20 +217,7 @@ struct AgentInspectorView: View {
                         }
 
                         fieldRow(l10n.color) {
-                            Picker("", selection: Binding(
-                                get: { appState.editingAgent?.color ?? .blue },
-                                set: { appState.editingAgent?.color = $0 }
-                            )) {
-                                ForEach(AgentColor.allCases, id: \.self) { color in
-                                    HStack(spacing: 4) {
-                                        Circle().fill(color.swiftUIColor).frame(width: 6, height: 6)
-                                        Text(color.displayName)
-                                    }
-                                    .tag(color)
-                                }
-                            }
-                            .labelsHidden()
-                            .controlSize(.small)
+                            colorSwatchPicker
                         }
                     }
 
@@ -764,6 +751,40 @@ struct AgentInspectorView: View {
     }
 
     /// Reusable vertical field row (label above, value below).
+    private var colorSwatchPicker: some View {
+        let selected = appState.editingAgent?.color ?? .blue
+        return HStack(spacing: 6) {
+            ForEach(AgentColor.allCases, id: \.self) { color in
+                Button {
+                    appState.editingAgent?.color = color
+                } label: {
+                    ZStack {
+                        Circle()
+                            .fill(color.swiftUIColor)
+                            .frame(width: 14, height: 14)
+                        if selected == color {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 7, weight: .bold))
+                                .foregroundStyle(.white)
+                                .shadow(color: .black.opacity(0.4), radius: 0.5)
+                        }
+                    }
+                    .overlay(
+                        Circle()
+                            .strokeBorder(
+                                color.swiftUIColor.opacity(selected == color ? 0.5 : 0),
+                                lineWidth: 1.5
+                            )
+                    )
+                    .frame(width: 20, height: 20)
+                }
+                .buttonStyle(.plain)
+                .pointingHandCursor()
+            }
+        }
+        .frame(height: 22)
+    }
+
     private func fieldRow<Content: View>(_ label: String, @ViewBuilder content: () -> Content) -> some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(label)

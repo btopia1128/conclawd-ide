@@ -97,12 +97,17 @@ struct L10n {
     var codexSkillSyncDesc: String { s("Automatically syncs skills from ~/.claude/skills/ to ~/.codex/skills/ so Codex CLI can use them.", "~/.claude/skills/ のスキルを ~/.codex/skills/ に自動同期し、Codex CLIで利用可能にします。") }
     var createForClaudeCode: String { s("Claude Code", "Claude Code") }
     var createForCodex: String { s("Codex CLI", "Codex CLI") }
+    var createWithAI: String { s("Create with AI", "AIで作成") }
+    var createManually: String { s("Create Manually", "手動で作成") }
+    var createAgentWithAI: String { s("Create Agent with AI", "AIでエージェントを作成") }
+    var createSkillWithAI: String { s("Create Skill with AI", "AIでスキルを作成") }
 
     // MARK: - Background Tasks Settings
     var backgroundTasks: String { s("Background Tasks", "バックグラウンドタスク") }
     var backgroundTasksDesc: String { s("Choose which CLI runs each background task. Claude consumes its programmatic credit pool; Codex uses your Codex subscription. Schedule (cloud triggers) always uses Claude because it relies on Anthropic's RemoteTrigger tool.", "各バックグラウンドタスクを実行するCLIを選択します。ClaudeはClaudeのプログラマティッククレジット枠を消費し、CodexはCodexサブスクを使用します。スケジュール（クラウドトリガー）はAnthropicのRemoteTriggerツールに依存するため常にClaudeを使用します。") }
     var memoryExtractionProvider: String { s("Memory Extraction", "メモリ抽出") }
     var commitMessageProvider: String { s("Commit Messages", "コミットメッセージ") }
+    var openMemoryExtractionLog: String { s("Open Extraction Log", "抽出ログを開く") }
 
     // MARK: - Notification Settings
 
@@ -136,7 +141,7 @@ struct L10n {
     var saveAsPreset: String { s("Save as Preset...", "プリセットとして保存...") }
     var command: String { s("Command", "コマンド") }
     var manual: String { s("Manual", "マニュアル") }
-    var commandPlaceholder: String { s("e.g. claude --model opus-4 --dangerously-skip-permissions", "例: claude --model opus-4 --dangerously-skip-permissions") }
+    var commandPlaceholder: String { s("e.g. claude --model opus --dangerously-skip-permissions", "例: claude --model opus --dangerously-skip-permissions") }
     var selectProjectToViewFiles: String { s("Select a project to view files", "プロジェクトを選択するとファイルを表示できます") }
     var unsavedChanges: String { s("Unsaved Changes", "未保存の変更") }
     var refresh: String { s("Refresh", "更新") }
@@ -152,6 +157,31 @@ struct L10n {
     func moveToTrashConfirmMessage(name: String) -> String {
         s("\"\(name)\" will be moved to the Trash. You can restore it from the Trash later.",
           "\"\(name)\" をゴミ箱に移動します。後でゴミ箱から復元できます。")
+    }
+    func moveToTrashConfirmMessage(count: Int) -> String {
+        s("\(count) items will be moved to the Trash. You can restore them from the Trash later.",
+          "\(count) 個の項目をゴミ箱に移動します。後でゴミ箱から復元できます。")
+    }
+    func copyPaths(count: Int) -> String {
+        s("Copy \(count) Paths", "\(count) 件のパスをコピー")
+    }
+    func copyRelativePaths(count: Int) -> String {
+        s("Copy \(count) Relative Paths", "\(count) 件の相対パスをコピー")
+    }
+    func moveToTrashItems(count: Int) -> String {
+        s("Move \(count) Items to Trash", "\(count) 個の項目をゴミ箱に入れる")
+    }
+    func revealItemsInFinder(count: Int) -> String {
+        s("Reveal \(count) Items in Finder", "\(count) 個の項目をFinderで表示")
+    }
+    var copyFile: String { s("Copy", "コピー") }
+    var cutFile: String { s("Cut", "カット") }
+    var pasteFile: String { s("Paste", "ペースト") }
+    func copyItems(count: Int) -> String {
+        s("Copy \(count) Items", "\(count) 個の項目をコピー")
+    }
+    func cutItems(count: Int) -> String {
+        s("Cut \(count) Items", "\(count) 個の項目をカット")
     }
 
     // MARK: - Common Actions
@@ -288,11 +318,13 @@ struct L10n {
 
     var noAgentSelected: String { s("No agent selected", "エージェント未選択") }
     var selectAgentToEdit: String { s("Select an agent and choose \"Inspect\" to edit", "エージェントを選択して「インスペクト」で編集") }
+    var agentPromptPlaceholder: String { s("Write this agent's system prompt in Markdown...", "このエージェントのシステムプロンプトをMarkdownで記述...") }
 
     // MARK: - Skill Editor
 
     var noSkillSelected: String { s("No skill selected", "スキル未選択") }
     var selectSkillToEdit: String { s("Select a skill from the sidebar to edit", "サイドバーからスキルを選択して編集") }
+    var skillContentPlaceholder: String { s("Write this skill's instructions in Markdown...", "このスキルの指示をMarkdownで記述...") }
     var binaryFile: String { s("Binary file", "バイナリファイル") }
     var chooseApplication: String { s("Choose Application...", "アプリケーションを選択...") }
     var resetToDefault: String { s("Reset to Default", "デフォルトに戻す") }
@@ -444,6 +476,8 @@ struct L10n {
     var addAgent: String { s("Add an agent to get started", "エージェントを追加して始めましょう") }
     var noSkills: String { s("No skills found", "スキルが見つかりません") }
     var addSkill: String { s("Add a skill to get started", "スキルを追加して始めましょう") }
+    var noAgentsInSection: String { s("No agents", "エージェントはありません") }
+    var noSkillsInSection: String { s("No skills", "スキルはありません") }
     var noSchedules: String { s("No schedules", "スケジュールなし") }
     var addScheduleToStart: String { s("Add a schedule to automate tasks", "スケジュールを追加してタスクを自動化") }
     var noSessions: String { s("No active sessions", "アクティブなセッションなし") }

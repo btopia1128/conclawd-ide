@@ -30,7 +30,7 @@ struct NewScheduleSheet: View {
     // Cloud-specific state
     @State private var cloudName: String = ""
     @State private var cloudCron: String = "0 9 * * 1-5"
-    @State private var cloudModel: String = "claude-sonnet-4-6"
+    @State private var cloudModel: String = "sonnet"
     @State private var cloudEnvironmentId: String = "default"
     @State private var isCreatingCloud: Bool = false
     @State private var cloudError: String?
@@ -293,9 +293,9 @@ struct NewScheduleSheet: View {
             TextField(l10n.name, text: $cloudName)
 
             Picker(l10n.model, selection: $cloudModel) {
-                Text("Sonnet").tag("claude-sonnet-4-6")
-                Text("Opus").tag("claude-opus-4-6")
-                Text("Haiku").tag("claude-haiku-4-5-20251001")
+                Text("Sonnet").tag("sonnet")
+                Text("Opus").tag("opus")
+                Text("Haiku").tag("haiku")
             }
 
             TextField(l10n.environmentId, text: $cloudEnvironmentId)

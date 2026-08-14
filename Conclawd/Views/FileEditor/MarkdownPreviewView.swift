@@ -16,8 +16,10 @@ private extension NSColor {
 /// Renders Markdown as HTML in a WKWebView using bundled marked.js + highlight.js.
 /// Light/dark theme follows the app's `appearanceMode` setting.
 struct MarkdownPreviewView: NSViewRepresentable {
+    let fileURL: URL
     let content: String
     let baseURL: URL?
+    @Binding var relativeScrollPosition: Double
     /// Whether the preview is currently the visible mode. When false we skip HTML
     /// reloads to avoid wasted work while the editor is on top.
     var isVisible: Bool = true
@@ -52,7 +54,7 @@ struct MarkdownPreviewView: NSViewRepresentable {
         surfaceNSColor.hexString
     }
 
-    func makeNSView(context: Context) -> WKWebView {
+    func makeNSView(context: Context) -> PreviewContainerView {
         let config = WKWebViewConfiguration()
         config.preferences.javaScriptCanOpenWindowsAutomatically = false
 
@@ -61,20 +63,34 @@ struct MarkdownPreviewView: NSViewRepresentable {
         webView.wantsLayer = true
         webView.layer?.backgroundColor = surfaceNSColor.cgColor
         webView.navigationDelegate = context.coordinator
-        loadHTML(into: webView)
-        return webView
+
+        let container = PreviewContainerView(webView: webView)
+        context.coordinator.update(
+            container: container,
+            request: .init(fileURL: fileURL, content: content, baseURL: baseURL, isDark: isDark),
+            isVisible: isVisible,
+            relativeScrollPosition: $relativeScrollPosition,
+            surfaceColor: surfaceNSColor,
+            makeHTML: { markdown, dark in
+                makeHTML(markdown: markdown, dark: dark)
+            }
+        )
+        return container
     }
 
-    func updateNSView(_ webView: WKWebView, context: Context) {
+    func updateNSView(_ container: PreviewContainerView, context: Context) {
         let coord = context.coordinator
-        webView.layer?.backgroundColor = surfaceNSColor.cgColor
-
-        // Skip reload work while the preview is hidden behind the editor.
-        guard isVisible else { return }
-
-        if coord.lastContent != content || coord.lastIsDark != isDark {
-            loadHTML(into: webView)
-        }
+        container.webView.layer?.backgroundColor = surfaceNSColor.cgColor
+        coord.update(
+            container: container,
+            request: .init(fileURL: fileURL, content: content, baseURL: baseURL, isDark: isDark),
+            isVisible: isVisible,
+            relativeScrollPosition: $relativeScrollPosition,
+            surfaceColor: surfaceNSColor,
+            makeHTML: { markdown, dark in
+                makeHTML(markdown: markdown, dark: dark)
+            }
+        )
     }
 
     func makeCoordinator() -> Coordinator {
@@ -82,8 +98,56 @@ struct MarkdownPreviewView: NSViewRepresentable {
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate {
-        var lastContent: String?
-        var lastIsDark: Bool?
+        struct Request: Equatable {
+            let fileURL: URL
+            let content: String
+            let baseURL: URL?
+            let isDark: Bool
+        }
+
+        private var renderedRequest: Request?
+        private var pendingRequest: Request?
+        private weak var pendingNavigation: WKNavigation?
+        private var currentRelativeScrollPosition: Binding<Double> = .constant(0)
+        private var wasVisible = false
+
+        func update(
+            container: PreviewContainerView,
+            request: Request,
+            isVisible: Bool,
+            relativeScrollPosition: Binding<Double>,
+            surfaceColor: NSColor,
+            makeHTML: @escaping (String, Bool) -> String
+        ) {
+            let wasVisibleBeforeUpdate = wasVisible
+            defer { wasVisible = isVisible }
+            currentRelativeScrollPosition = relativeScrollPosition
+
+            if !isVisible {
+                if wasVisibleBeforeUpdate {
+                    persistScrollPosition(in: container.webView, relativeScrollPosition: relativeScrollPosition)
+                }
+                return
+            }
+
+            if !wasVisibleBeforeUpdate, renderedRequest == request {
+                restoreScrollPosition(relativeScrollPosition.wrappedValue, in: container.webView)
+                return
+            }
+
+            if pendingRequest == request || renderedRequest == request {
+                return
+            }
+
+            if wasVisibleBeforeUpdate {
+                persistScrollPosition(in: container.webView, relativeScrollPosition: relativeScrollPosition)
+                container.showSnapshot(of: container.webView)
+            } else if renderedRequest?.fileURL != request.fileURL {
+                container.showPlaceholder(color: surfaceColor)
+            }
+
+            load(request, in: container.webView, makeHTML: makeHTML)
+        }
 
         // Open external links in the default browser instead of navigating inside the WebView.
         @MainActor
@@ -95,17 +159,87 @@ struct MarkdownPreviewView: NSViewRepresentable {
             }
             decisionHandler(.allow)
         }
+
+        @MainActor
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            guard navigation === pendingNavigation, let request = pendingRequest else { return }
+            restoreScrollPosition(currentRelativeScrollPosition.wrappedValue, in: webView)
+            renderedRequest = request
+            pendingRequest = nil
+            pendingNavigation = nil
+            (webView.superview as? PreviewContainerView)?.fadeOutSnapshot()
+        }
+
+        @MainActor
+        func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+            guard navigation === pendingNavigation else { return }
+            finishFailedTransition(in: webView)
+        }
+
+        @MainActor
+        func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+            guard navigation === pendingNavigation else { return }
+            finishFailedTransition(in: webView)
+        }
+
+        private func load(
+            _ request: Request,
+            in webView: WKWebView,
+            makeHTML: (String, Bool) -> String
+        ) {
+            let html = makeHTML(request.content, request.isDark)
+            pendingRequest = request
+            pendingNavigation = webView.loadHTMLString(html, baseURL: request.baseURL)
+        }
+
+        private func persistScrollPosition(in webView: WKWebView, relativeScrollPosition: Binding<Double>) {
+            relativeScrollPosition.wrappedValue = currentRelativeScrollPosition(in: webView)
+        }
+
+        private func restoreScrollPosition(_ relativeScrollPosition: Double, in webView: WKWebView) {
+            let scrollY = scrollOffset(for: relativeScrollPosition, in: webView)
+            let js = "window.scrollTo(0, \(scrollY));"
+            webView.evaluateJavaScript(js, completionHandler: nil)
+        }
+
+        private func currentRelativeScrollPosition(in webView: WKWebView) -> Double {
+            guard let scrollView = scrollView(in: webView) else { return 0 }
+            let maxOffset = max(scrollView.documentViewHeight - scrollView.contentSize.height, 0)
+            guard maxOffset > 0 else { return 0 }
+            return min(max(Double(scrollView.contentView.bounds.origin.y / maxOffset), 0), 1)
+        }
+
+        private func scrollOffset(for relativeScrollPosition: Double, in webView: WKWebView) -> Double {
+            guard let scrollView = scrollView(in: webView) else { return 0 }
+            let maxOffset = max(scrollView.documentViewHeight - scrollView.contentSize.height, 0)
+            guard maxOffset > 0 else { return 0 }
+            return Double(maxOffset) * min(max(relativeScrollPosition, 0), 1)
+        }
+
+        private func finishFailedTransition(in webView: WKWebView) {
+            pendingRequest = nil
+            pendingNavigation = nil
+            (webView.superview as? PreviewContainerView)?.hideSnapshot()
+        }
+
+        private func scrollView(in webView: WKWebView) -> NSScrollView? {
+            findScrollView(in: webView)
+        }
+
+        private func findScrollView(in view: NSView) -> NSScrollView? {
+            if let scrollView = view as? NSScrollView {
+                return scrollView
+            }
+            for subview in view.subviews {
+                if let scrollView = findScrollView(in: subview) {
+                    return scrollView
+                }
+            }
+            return nil
+        }
     }
 
     // MARK: - HTML loading
-
-    private func loadHTML(into webView: WKWebView) {
-        let html = makeHTML(markdown: content, dark: isDark)
-        webView.loadHTMLString(html, baseURL: baseURL)
-        let coord = webView.navigationDelegate as? Coordinator
-        coord?.lastContent = content
-        coord?.lastIsDark = isDark
-    }
 
     private func makeHTML(markdown: String, dark: Bool) -> String {
         let bundle = Bundle.main
@@ -203,5 +337,87 @@ struct MarkdownPreviewView: NSViewRepresentable {
         </body>
         </html>
         """
+    }
+}
+
+private extension NSScrollView {
+    var documentViewHeight: CGFloat {
+        documentView?.bounds.height ?? 0
+    }
+}
+
+final class PreviewContainerView: NSView {
+    let webView: WKWebView
+    private let snapshotView = NSImageView()
+
+    init(webView: WKWebView) {
+        self.webView = webView
+        super.init(frame: .zero)
+
+        wantsLayer = true
+
+        webView.frame = bounds
+        webView.autoresizingMask = [.width, .height]
+        addSubview(webView)
+
+        snapshotView.frame = bounds
+        snapshotView.autoresizingMask = [.width, .height]
+        snapshotView.imageScaling = .scaleAxesIndependently
+        snapshotView.wantsLayer = true
+        snapshotView.isHidden = true
+        addSubview(snapshotView)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func showSnapshot(of webView: WKWebView) {
+        guard let image = makeSnapshot(of: webView) else {
+            hideSnapshot()
+            return
+        }
+
+        snapshotView.alphaValue = 1
+        snapshotView.image = image
+        snapshotView.isHidden = false
+    }
+
+    func showPlaceholder(color: NSColor) {
+        snapshotView.layer?.backgroundColor = color.cgColor
+        snapshotView.alphaValue = 1
+        snapshotView.image = nil
+        snapshotView.isHidden = false
+    }
+
+    func fadeOutSnapshot() {
+        guard !snapshotView.isHidden else { return }
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.15
+            snapshotView.animator().alphaValue = 0
+        } completionHandler: { [weak self] in
+            self?.hideSnapshot()
+        }
+    }
+
+    func hideSnapshot() {
+        snapshotView.alphaValue = 1
+        snapshotView.layer?.backgroundColor = nil
+        snapshotView.image = nil
+        snapshotView.isHidden = true
+    }
+
+    private func makeSnapshot(of view: NSView) -> NSImage? {
+        let bounds = view.bounds.integral
+        guard !bounds.isEmpty,
+              let representation = view.bitmapImageRepForCachingDisplay(in: bounds) else {
+            return nil
+        }
+
+        view.cacheDisplay(in: bounds, to: representation)
+        let image = NSImage(size: bounds.size)
+        image.addRepresentation(representation)
+        return image
     }
 }

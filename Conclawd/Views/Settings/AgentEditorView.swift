@@ -34,7 +34,8 @@ struct AgentEditorView: View {
             ),
             language: "markdown",
             showLineNumbers: state.editorShowLineNumbers,
-            wordWrap: state.editorWordWrap
+            wordWrap: state.editorWordWrap,
+            placeholder: l10n.agentPromptPlaceholder
         )
         .filePathDrop(text: Binding(
             get: { state.editingAgentContent ?? "" },

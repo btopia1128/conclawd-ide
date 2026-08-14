@@ -4,6 +4,18 @@ options:
   deploymentTarget:
     macOS: "14.0"
   generateEmptyDirectories: true
+  # XcodeGen has no option for the scheme's Queue Debugging setting; patch it in
+  # after generation. Leaving it on deadlocks forkpty (see the script's comment).
+  postGenCommand: bash Scripts/disable-queue-debugging.sh
+
+# Sign with a stable identity so TCC grants (Desktop/Documents access, etc.)
+# survive rebuilds. Ad-hoc/unsigned builds get a new CDHash every build, which
+# makes macOS re-prompt for permissions each time.
+settings:
+  base:
+    CODE_SIGN_STYLE: Automatic
+    CODE_SIGN_IDENTITY: "Apple Development"
+    DEVELOPMENT_TEAM: 8LG94A3CX7
 
 packages:
   SwiftTerm:
@@ -39,7 +51,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.conclawd.app
         PRODUCT_NAME: Conclawd
-        MARKETING_VERSION: "0.1.0"
+        MARKETING_VERSION: "0.1.1"
         CURRENT_PROJECT_VERSION: "1"
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_LSApplicationCategoryType: "public.app-category.developer-tools"
@@ -47,13 +59,43 @@ targets:
         SWIFT_VERSION: "6.0"
         MACOSX_DEPLOYMENT_TARGET: "14.0"
         ENABLE_APP_SANDBOX: NO
-        CODE_SIGNING_ALLOWED: NO
+      configs:
+        Debug:
+          ASSETCATALOG_COMPILER_APPICON_NAME: AppIconDev
+        Release:
+          ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     dependencies:
       - package: SwiftTerm
       - package: Yams
       - package: Highlightr
       - package: GRDB
       - sdk: CoreML.framework
+      # SDK 26.x のautolinkでは import AVKit が _AVKit_SwiftUI しかリンクせず、
+      # 実行時に AVPlayerView が未ロードで VideoPlayer 表示時にクラッシュするため明示リンク
+      - sdk: AVKit.framework
+      - target: ConclawdCtl
+        embed: false
+    postBuildScripts:
+      - name: Bundle conclawd helper CLI
+        script: |
+          mkdir -p "${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}/Helpers"
+          cp -f "${BUILT_PRODUCTS_DIR}/conclawd" "${TARGET_BUILD_DIR}/${CONTENTS_FOLDER_PATH}/Helpers/conclawd"
+        inputFiles:
+          - $(BUILT_PRODUCTS_DIR)/conclawd
+        outputFiles:
+          - $(TARGET_BUILD_DIR)/$(CONTENTS_FOLDER_PATH)/Helpers/conclawd
+
+  ConclawdCtl:
+    type: tool
+    platform: macOS
+    sources:
+      - path: ConclawdCtl
+      - path: Conclawd/Services/SessionControlProtocol.swift
+    settings:
+      base:
+        PRODUCT_NAME: conclawd
+        SWIFT_VERSION: "6.0"
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
 
   ConclawdEmbed:
     type: tool
@@ -66,7 +108,6 @@ targets:
         PRODUCT_NAME: conclawd-embed
         SWIFT_VERSION: "6.0"
         MACOSX_DEPLOYMENT_TARGET: "14.0"
-        CODE_SIGNING_ALLOWED: NO
     dependencies:
       - sdk: CoreML.framework
 

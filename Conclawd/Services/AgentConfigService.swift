@@ -274,9 +274,12 @@ final class AgentConfigService {
         lines.append("---")
         lines.append("name: \(agent.name)")
 
-        if !agent.description.isEmpty {
-            lines.append("description: \(yamlEscapeString(agent.description))")
-        }
+        // Claude Code requires a non-empty `description` for an agent to be
+        // discoverable and selectable via `--agent`. Fall back to the agent
+        // name when the user left it blank so the file stays a valid agent
+        // definition (otherwise `claude --agent <name>` reports "not found").
+        let description = agent.description.isEmpty ? agent.name : agent.description
+        lines.append("description: \(yamlEscapeString(description))")
 
         if agent.model != .inherit {
             lines.append("model: \(agent.model.shortName)")

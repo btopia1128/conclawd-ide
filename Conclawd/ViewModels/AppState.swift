@@ -46,6 +46,28 @@ final class AppState {
     /// Convenience accessor for the currently selected project (nil unless `.project`).
     var selectedProject: Project? { projectSelection.project }
 
+    /// Agents ordered by most-recent session use (descending). Agents that have
+    /// never been used keep their normal `agents` order and sort after used ones.
+    /// Used by the "New Session → From Agent" pickers so recently used agents surface first.
+    var agentsByRecentUse: [Agent] {
+        // session history records are newest-first, so the first match per path is the latest use.
+        var lastUsed: [String: Date] = [:]
+        for record in sessionHistoryService.records {
+            guard let path = record.agentFilePath else { continue }
+            if lastUsed[path] == nil { lastUsed[path] = record.startedAt }
+        }
+        return agents.enumerated().sorted { lhs, rhs in
+            let dateL = (lhs.element.filePath?.path(percentEncoded: false)).flatMap { lastUsed[$0] }
+            let dateR = (rhs.element.filePath?.path(percentEncoded: false)).flatMap { lastUsed[$0] }
+            switch (dateL, dateR) {
+            case let (l?, r?): return l > r
+            case (.some, .none): return true
+            case (.none, .some): return false
+            case (.none, .none): return lhs.offset < rhs.offset  // preserve existing order
+            }
+        }.map(\.element)
+    }
+
     // MARK: - Pane State (split-pane main view)
 
     /// Primary (left) main pane. Always present.
@@ -437,6 +459,24 @@ final class AppState {
     var fileCreationParentNode: FileNode?
     var fileCreationName = ""
 
+    /// The file tree node currently being renamed inline (nil when not renaming).
+    var renamingNodeId: UUID?
+
+    /// File tree nodes currently selected in the sidebar. A single selection is
+    /// the F2 rename target; multiple nodes can be selected with ⌘-click / ⇧-click.
+    var selectedTreeNodeIds: Set<UUID> = []
+
+    /// Anchor node for ⇧-click range selection (the last node clicked without ⇧).
+    var treeSelectionAnchorId: UUID?
+
+    /// URLs marked by ⌘X, shown dimmed until they are pasted somewhere.
+    /// Cleared as soon as another app (or a ⌘C) replaces the pasteboard contents.
+    private(set) var cutFileURLs: Set<URL> = []
+
+    /// `NSPasteboard.general.changeCount` at the time of the ⌘X, so a cut that
+    /// was superseded by someone else's copy pastes as a copy instead of a move.
+    private var cutPasteboardChangeCount: Int = -1
+
     /// Raw markdown content being edited in the center-pane agent editor.
     var editingAgentContent: String?
     var agentEditorHasChanges: Bool = false
@@ -494,6 +534,7 @@ final class AppState {
     let gitService = GitService()
     let shellPresetService = ShellPresetService()
     let sessionPresetService = SessionPresetService()
+    let sessionControlServer = SessionControlServer()
 
     // MARK: - Git State
 
@@ -517,6 +558,10 @@ final class AppState {
 
     /// Polling timer for detecting new skills during AI creation sessions.
     private var skillCreationPollTimer: Timer?
+
+    /// Handoff prompts queued for split sessions (created via the `conclawd`
+    /// helper CLI), delivered on the session's first idle.
+    private var pendingHandoffPrompts: [UUID: String] = [:]
 
     // MARK: - Init
 
@@ -559,6 +604,8 @@ final class AppState {
         setupFileWatcher()
         setupOpenFileWatcher()
         setupScheduleManager()
+        setupSessionControlServer()
+        SessionSplitSkillInstaller.installIfNeeded()
         refreshGitStatus()
         setupGitHeadWatcher()
 
@@ -646,6 +693,58 @@ final class AppState {
         }
     }
 
+    /// Window title exposing the current work context so external tools
+    /// (e.g. time trackers reading the window's accessibility title) can tell
+    /// which project is active. Mirrors the Xcode/VS Code "<context> — App" form.
+    /// The visible titlebar stays hidden, so this only affects the machine-readable title.
+    var windowTitle: String {
+        guard let context = activeWorkContext else { return "Conclawd" }
+        return "\(context) — Conclawd"
+    }
+
+    /// Best-effort identifier of the project / working directory currently in
+    /// focus. Tries several sources (widest net last) so that the machine-readable
+    /// title carries a usable discriminator whenever *any* project context exists,
+    /// not only when a cwd-backed session or project is explicitly selected.
+    /// Returns nil only when there is genuinely no project context (e.g. the home
+    /// view with no open file and no working-directory session).
+    private var activeWorkContext: String? {
+        // 1. Selected terminal session's working directory.
+        if let sessionId = selectedSessionId,
+           let session = activeSessions.first(where: { $0.id == sessionId }),
+           let cwd = session.workingDirectory {
+            return cwd.lastPathComponent
+        }
+        // 2. Selected open file → owning project (fallback: enclosing folder).
+        if let fileId = selectedFileId,
+           let file = openFiles.first(where: { $0.id == fileId }) {
+            return contextName(for: file.url)
+        }
+        // 3. Explicitly selected project.
+        if let project = selectedProject {
+            return project.name
+        }
+        // 4. Any active session's working directory (most recent first).
+        if let cwd = activeSessions.reversed().compactMap({ $0.workingDirectory }).first {
+            return cwd.lastPathComponent
+        }
+        // 5. Any open file → owning project (fallback: enclosing folder).
+        if let file = openFiles.last {
+            return contextName(for: file.url)
+        }
+        return nil
+    }
+
+    /// The owning project's name for `url` (deepest matching project root),
+    /// falling back to the file's enclosing folder name.
+    private func contextName(for url: URL) -> String {
+        let filePath = url.path(percentEncoded: false)
+        let owning = projects
+            .filter { filePath.hasPrefix($0.directoryPath.path(percentEncoded: false)) }
+            .max(by: { $0.directoryPath.path.count < $1.directoryPath.path.count })
+        return owning?.name ?? url.deletingLastPathComponent().lastPathComponent
+    }
+
     /// The project path for the current selection (used for history filtering).
     var currentProjectPath: String? {
         switch projectSelection {
@@ -702,10 +801,6 @@ final class AppState {
         var updated = project
         updated.lastOpenedAt = Date()
         projects.insert(updated, at: 0)
-
-        if projects.count > 10 {
-            projects = Array(projects.prefix(10))
-        }
         saveRecentProjects()
 
         reloadAgents()
@@ -767,6 +862,12 @@ final class AppState {
     static let memoryExtractionProviderKey = "memoryExtractionProvider"
     static let commitMessageProviderKey = "commitMessageProvider"
 
+    /// UserDefaults keys for background-task model selection (AgentModel shortName).
+    static let memoryExtractionClaudeModelKey = "memoryExtractionClaudeModel"
+    static let memoryExtractionCodexModelKey = "memoryExtractionCodexModel"
+    static let commitMessageClaudeModelKey = "commitMessageClaudeModel"
+    static let commitMessageCodexModelKey = "commitMessageCodexModel"
+
     /// Reads the configured provider for memory extraction (default: claude).
     private func memoryExtractionProvider() -> CLIProviderType {
         let raw = UserDefaults.standard.string(forKey: Self.memoryExtractionProviderKey) ?? "claude"
@@ -777,6 +878,20 @@ final class AppState {
     private func commitMessageProvider() -> CLIProviderType {
         let raw = UserDefaults.standard.string(forKey: Self.commitMessageProviderKey) ?? "claude"
         return raw == "codex" ? .codex : .claude
+    }
+
+    /// Reads the configured model for memory extraction (provider-aware, default: sonnet).
+    private func memoryExtractionModel(for provider: CLIProviderType) -> AgentModel {
+        let key = provider == .codex ? Self.memoryExtractionCodexModelKey : Self.memoryExtractionClaudeModelKey
+        let raw = UserDefaults.standard.string(forKey: key) ?? "sonnet"
+        return AgentModel.from(raw)
+    }
+
+    /// Reads the configured model for commit message generation (provider-aware, default: haiku).
+    private func commitMessageModel(for provider: CLIProviderType) -> AgentModel {
+        let key = provider == .codex ? Self.commitMessageCodexModelKey : Self.commitMessageClaudeModelKey
+        let raw = UserDefaults.standard.string(forKey: key) ?? "haiku"
+        return AgentModel.from(raw)
     }
 
     /// Reads UserDefaults and sets `projectSelection` before first reload.
@@ -1041,7 +1156,7 @@ final class AppState {
         editingSkill = selectedSkill
     }
 
-    func createAgent(name: String, description: String, model: AgentModel, scope: AgentScope, projectDirectory: URL? = nil, localDirectory: URL? = nil, customFlags: String? = nil, defaultProvider: CLIProviderType = .claude, rawCommand: String? = nil) {
+    func createAgent(name: String, description: String, model: AgentModel, scope: AgentScope, projectDirectory: URL? = nil, localDirectory: URL? = nil, customFlags: String? = nil, defaultProvider: CLIProviderType = .claude, rawCommand: String? = nil, permissionMode: PermissionMode = .default) {
         let targetDir: URL
         let fm = FileManager.default
         var projectBaseDir: URL?
@@ -1071,9 +1186,6 @@ final class AppState {
             if !projects.contains(where: { $0.directoryPath == baseDir }) {
                 let project = Project(name: baseDir.lastPathComponent, directoryPath: baseDir)
                 projects.insert(project, at: 0)
-                if projects.count > 10 {
-                    projects = Array(projects.prefix(10))
-                }
                 saveRecentProjects()
             }
         case .user:
@@ -1096,6 +1208,7 @@ final class AppState {
         }
         agent.defaultProvider = defaultProvider
         agent.rawCommand = rawCommand
+        agent.permissionMode = permissionMode
 
         do {
             try configService.saveAgent(agent, to: targetDir)
@@ -1454,7 +1567,7 @@ final class AppState {
 
     /// Show the file creation alert for a new file.
     func promptCreateFile(in node: FileNode? = nil) {
-        fileCreationParentNode = node
+        fileCreationParentNode = node ?? keyboardCreationParentNode()
         fileCreationIsDirectory = false
         fileCreationName = ""
         showingFileCreationAlert = true
@@ -1462,10 +1575,23 @@ final class AppState {
 
     /// Show the file creation alert for a new folder.
     func promptCreateDirectory(in node: FileNode? = nil) {
-        fileCreationParentNode = node
+        fileCreationParentNode = node ?? keyboardCreationParentNode()
         fileCreationIsDirectory = true
         fileCreationName = ""
         showingFileCreationAlert = true
+    }
+
+    /// Directory node ⌘N / ⇧⌘N should create into, mirroring paste: the
+    /// selection anchor when it's a directory, a selected file's parent
+    /// directory, or nil (the tree root) when nothing relevant is selected.
+    /// Only applies while the Files tab is showing.
+    private func keyboardCreationParentNode() -> FileNode? {
+        guard sidebarTab == .files else { return nil }
+        let target = selectedTreeNodes.first { $0.id == treeSelectionAnchorId }
+            ?? selectedTreeNodes.first
+        guard let target else { return nil }
+        if target.isDirectory { return target }
+        return findNode(at: target.url.deletingLastPathComponent(), in: fileTreeRoots)
     }
 
     /// Create the file or directory after the user confirms the alert.
@@ -1546,6 +1672,29 @@ final class AppState {
         }
     }
 
+    /// The open file the active pane is currently editing, if any.
+    var activeEditorFile: OpenFile? {
+        guard activePane.centerPane == .fileEditor,
+              let id = activePane.selectedFileId else { return nil }
+        return openFiles.first { $0.id == id }
+    }
+
+    /// Whether ⌘S should be routed to the file editor (drives the Save menu item's
+    /// enabled state — a disabled item with a key equivalent swallows the
+    /// shortcut and beeps instead of letting it through).
+    var canSaveEditorFile: Bool { activeEditorFile != nil }
+
+    /// Save the file the active pane is editing. Returns whether the file editor
+    /// owned this save request, so callers can fall through to other targets.
+    @discardableResult
+    func saveActiveEditorFile() -> Bool {
+        guard let file = activeEditorFile else { return false }
+        if file.hasChanges {
+            saveFile(fileId: file.id)
+        }
+        return true
+    }
+
     /// Save the file with the given ID to disk.
     func saveFile(fileId: UUID) {
         guard let index = openFiles.firstIndex(where: { $0.id == fileId }) else { return }
@@ -1554,31 +1703,519 @@ final class AppState {
         openFiles[index].hasChanges = false
     }
 
+    /// Copy externally dragged files/directories into the given destination directory.
+    /// If `destination` is nil, files are copied to the selected project root.
+    /// Returns true if at least one item was successfully imported.
+    @discardableResult
+    func importDroppedFiles(_ sourceURLs: [URL], to destination: FileNode? = nil) -> Bool {
+        let destinationDirectoryURL: URL?
+        if let destination, destination.isDirectory {
+            destinationDirectoryURL = destination.url
+        } else if let destination {
+            destinationDirectoryURL = destination.url.deletingLastPathComponent()
+        } else {
+            destinationDirectoryURL = nil
+        }
+        return importDroppedFiles(sourceURLs, toDirectoryURL: destinationDirectoryURL)
+    }
+
+    /// Copy externally dragged files/directories into the given destination directory URL.
+    /// If `destinationDirectoryURL` is nil, files are copied to the selected project root.
+    /// Returns true if at least one item was successfully imported.
+    @discardableResult
+    func importDroppedFiles(_ sourceURLs: [URL], toDirectoryURL destinationDirectoryURL: URL? = nil) -> Bool {
+        let destinationURL: URL
+        if let destinationDirectoryURL {
+            destinationURL = destinationDirectoryURL
+        } else if let project = selectedProject {
+            destinationURL = project.directoryPath
+        } else {
+            return false
+        }
+
+        let created = copyItems(sourceURLs, toDirectoryURL: destinationURL, duplicatingInPlace: false)
+        guard !created.isEmpty else { return false }
+
+        refreshImportedDestination(at: destinationURL)
+
+        return true
+    }
+
+    /// Copy items into `destinationURL`, disambiguating names that already exist.
+    /// - Parameter duplicatingInPlace: when true, copying an item into the folder
+    ///   it already lives in creates a numbered duplicate (⌘C → ⌘V in place);
+    ///   when false that case is skipped (dropping an item back onto its own folder).
+    /// - Returns: the URLs actually created.
+    private func copyItems(_ sourceURLs: [URL], toDirectoryURL destinationURL: URL, duplicatingInPlace: Bool) -> [URL] {
+        let fm = FileManager.default
+        var created: [URL] = []
+
+        for source in sourceURLs {
+            let standardizedSource = source.standardizedFileURL
+            let name = standardizedSource.lastPathComponent
+            var targetURL = destinationURL.appendingPathComponent(name)
+
+            // Skip when source and destination are the same.
+            if !duplicatingInPlace, targetURL.standardizedFileURL == standardizedSource {
+                continue
+            }
+            // Refuse to copy a directory into itself or one of its descendants.
+            if isSameOrDescendant(destinationURL, of: standardizedSource) { continue }
+
+            // Disambiguate names that already exist.
+            if fm.fileExists(atPath: targetURL.path) {
+                let ext = standardizedSource.pathExtension
+                let base = ext.isEmpty ? name : String(name.dropLast(ext.count + 1))
+                var counter = 2
+                while fm.fileExists(atPath: targetURL.path) {
+                    let candidateName = ext.isEmpty
+                        ? "\(base) \(counter)"
+                        : "\(base) \(counter).\(ext)"
+                    targetURL = destinationURL.appendingPathComponent(candidateName)
+                    counter += 1
+                }
+            }
+
+            do {
+                try fm.copyItem(at: standardizedSource, to: targetURL)
+                created.append(targetURL)
+            } catch {
+                continue
+            }
+        }
+
+        return created
+    }
+
+    // MARK: - File Tree Selection
+
+    /// Nodes matching the current multi-selection, in visible (top-down) order.
+    var selectedTreeNodes: [FileNode] {
+        guard !selectedTreeNodeIds.isEmpty else { return [] }
+        return flattenedVisibleTreeNodes().filter { selectedTreeNodeIds.contains($0.id) }
+    }
+
+    /// All currently visible nodes (respecting collapsed directories), top-down.
+    private func flattenedVisibleTreeNodes() -> [FileNode] {
+        var result: [FileNode] = []
+        func flatten(_ nodes: [FileNode]) {
+            for node in nodes {
+                result.append(node)
+                if node.isDirectory, node.isExpanded, let children = node.children {
+                    flatten(children)
+                }
+            }
+        }
+        flatten(fileTreeRoots)
+        return result
+    }
+
+    /// Apply a click on a file tree row to the selection.
+    /// - Parameters:
+    ///   - extend: ⇧ held — select the range between the anchor and this node.
+    ///   - toggle: ⌘ held — add/remove this node from the selection.
+    /// - Returns: Whether the caller should perform the row's default action
+    ///   (open the file / toggle the directory). Only plain clicks activate.
+    @discardableResult
+    func handleTreeSelection(for node: FileNode, extend: Bool, toggle: Bool) -> Bool {
+        if extend, let anchorId = treeSelectionAnchorId, anchorId != node.id {
+            let ids = flattenedVisibleTreeNodes().map(\.id)
+            if let anchorIndex = ids.firstIndex(of: anchorId),
+               let targetIndex = ids.firstIndex(of: node.id) {
+                let range = anchorIndex <= targetIndex
+                    ? anchorIndex...targetIndex
+                    : targetIndex...anchorIndex
+                selectedTreeNodeIds = Set(ids[range])
+                return false
+            }
+        }
+
+        if toggle {
+            if selectedTreeNodeIds.contains(node.id) {
+                selectedTreeNodeIds.remove(node.id)
+            } else {
+                selectedTreeNodeIds.insert(node.id)
+            }
+            treeSelectionAnchorId = node.id
+            return false
+        }
+
+        selectedTreeNodeIds = [node.id]
+        treeSelectionAnchorId = node.id
+        return true
+    }
+
+    /// Clear the file tree selection (clicking empty space in the tree).
+    func clearTreeSelection() {
+        selectedTreeNodeIds = []
+        treeSelectionAnchorId = nil
+    }
+
+    /// Nodes a context menu / drag started on `node` should act upon: the whole
+    /// selection when `node` is part of it, otherwise just `node` itself.
+    func treeActionTargets(for node: FileNode) -> [FileNode] {
+        guard selectedTreeNodeIds.count > 1, selectedTreeNodeIds.contains(node.id) else {
+            return [node]
+        }
+        return selectedTreeNodes
+    }
+
+    /// Record the nodes taking part in a drag that started inside the file tree,
+    /// so in-app drop targets can resolve them without the pasteboard.
+    /// Dragging a node outside the selection resets the selection to that node.
+    func beginTreeDrag(from node: FileNode) {
+        let targets = treeActionTargets(for: node)
+        if targets.count == 1 {
+            selectedTreeNodeIds = [node.id]
+            treeSelectionAnchorId = node.id
+        }
+        FileDragSession.begin(urls: targets.map { $0.url.standardizedFileURL })
+    }
+
+    // MARK: - File Tree Clipboard
+
+    /// Root directory the file tree is showing (the selected project, or the
+    /// home directory when no project is selected).
+    var fileTreeRootURL: URL {
+        selectedProject?.directoryPath ?? FileManager.default.homeDirectoryForCurrentUser
+    }
+
+    /// File URLs currently sitting on the general pasteboard.
+    private var pasteboardFileURLs: [URL] {
+        let objects = NSPasteboard.general.readObjects(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]
+        )
+        return (objects as? [URL]) ?? []
+    }
+
+    /// Whether ⌘C / ⌘X have something to act on.
+    var canCopyFileTreeSelection: Bool { !selectedTreeNodeIds.isEmpty }
+
+    /// Whether ⌘V has files to paste into the tree.
+    var canPasteIntoFileTree: Bool { !pasteboardFileURLs.isEmpty }
+
+    /// ⌘C — put the nodes on the pasteboard as files, so they can be pasted back
+    /// into the tree, into Finder, or into any other app.
+    func copyFileNodes(_ nodes: [FileNode]) {
+        guard !nodes.isEmpty else { return }
+        writeToPasteboard(nodes.map(\.url))
+        clearCutState()
+    }
+
+    /// ⌘X — same as copy, except the next paste *inside the tree* moves the
+    /// items instead of copying them. Other apps still see a plain copy.
+    func cutFileNodes(_ nodes: [FileNode]) {
+        guard !nodes.isEmpty else { return }
+        let urls = nodes.map { $0.url.standardizedFileURL }
+        cutPasteboardChangeCount = writeToPasteboard(urls)
+        cutFileURLs = Set(urls)
+    }
+
+    /// ⌘V — paste the pasteboard's files into `node` (or into the current
+    /// selection / tree root when called from the keyboard). Items put on the
+    /// pasteboard by ⌘X are moved; everything else is copied.
+    func pasteFileNodes(into node: FileNode? = nil) {
+        guard let destinationURL = pasteDestinationURL(for: node) else { return }
+        pasteFileNodes(intoDirectoryURL: destinationURL)
+    }
+
+    /// ⌘V into an explicit directory (the tree background pastes into the root).
+    func pasteFileNodes(intoDirectoryURL destinationURL: URL) {
+        let sourceURLs = pasteboardFileURLs
+        guard !sourceURLs.isEmpty else { return }
+
+        let resultURLs: [URL]
+        if isCutPending {
+            resultURLs = moveFileNodesReturningURLs(sourceURLs, toDirectoryURL: destinationURL)
+            clearCutState()
+        } else {
+            resultURLs = copyItems(sourceURLs, toDirectoryURL: destinationURL, duplicatingInPlace: true)
+            if !resultURLs.isEmpty {
+                refreshImportedDestination(at: destinationURL)
+            }
+        }
+
+        selectTreeNodes(at: resultURLs)
+    }
+
+    /// Whether the pasteboard still holds the items marked by the last ⌘X.
+    private var isCutPending: Bool {
+        !cutFileURLs.isEmpty && NSPasteboard.general.changeCount == cutPasteboardChangeCount
+    }
+
+    /// Directory a paste should land in: the node itself when it's a directory,
+    /// its parent when it's a file, otherwise the anchor of the current
+    /// selection, falling back to the tree root.
+    private func pasteDestinationURL(for node: FileNode?) -> URL? {
+        let target = node
+            ?? selectedTreeNodes.first { $0.id == treeSelectionAnchorId }
+            ?? selectedTreeNodes.first
+        guard let target else { return fileTreeRootURL }
+        return target.isDirectory ? target.url : target.url.deletingLastPathComponent()
+    }
+
+    @discardableResult
+    private func writeToPasteboard(_ urls: [URL]) -> Int {
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.writeObjects(urls.map { $0.standardizedFileURL as NSURL })
+        return pasteboard.changeCount
+    }
+
+    private func clearCutState() {
+        cutFileURLs = []
+        cutPasteboardChangeCount = -1
+    }
+
+    /// Select the tree nodes for the given URLs, skipping any that aren't
+    /// visible yet (a full tree reload is debounced and may not have run).
+    private func selectTreeNodes(at urls: [URL]) {
+        let ids = urls.compactMap { findNode(at: $0, in: fileTreeRoots)?.id }
+        guard !ids.isEmpty else { return }
+        selectedTreeNodeIds = Set(ids)
+        treeSelectionAnchorId = ids.first
+    }
+
+    // MARK: - File Tree Mutations
+
     /// Move a file tree node to the Trash and refresh the tree.
     /// Any matching open file tab is closed first.
     func deleteFileNode(_ node: FileNode) {
-        let url = node.url
-        for file in openFiles where file.url == url {
-            closeFileTab(fileId: file.id)
+        deleteFileNodes([node])
+    }
+
+    /// Move file tree nodes to the Trash and refresh the affected directories.
+    /// Any open tabs pointing at (or nested under) a deleted item are closed first.
+    func deleteFileNodes(_ nodes: [FileNode]) {
+        guard !nodes.isEmpty else { return }
+        var parentURLs = Set<URL>()
+        var failures: [String] = []
+        var deletedAny = false
+
+        for node in nodes {
+            let url = node.url
+            for file in openFiles where isSameOrDescendant(file.url, of: url) {
+                closeFileTab(fileId: file.id)
+            }
+
+            var resultingURL: NSURL?
+            do {
+                try FileManager.default.trashItem(at: url, resultingItemURL: &resultingURL)
+                deletedAny = true
+                parentURLs.insert(url.deletingLastPathComponent().standardizedFileURL)
+            } catch {
+                failures.append("\(node.name): \(error.localizedDescription)")
+            }
         }
 
-        var resultingURL: NSURL?
-        do {
-            try FileManager.default.trashItem(at: url, resultingItemURL: &resultingURL)
-        } catch {
+        if deletedAny {
+            selectedTreeNodeIds.subtract(nodes.map(\.id))
+            for parentURL in parentURLs {
+                refreshDirectory(at: parentURL)
+            }
+        }
+
+        if !failures.isEmpty {
             let alert = NSAlert()
             alert.messageText = "Failed to move to Trash"
-            alert.informativeText = error.localizedDescription
+            alert.informativeText = failures.joined(separator: "\n")
             alert.alertStyle = .warning
             alert.runModal()
+        }
+    }
+
+    /// Move items already inside the app's file tree into another directory.
+    /// Used for in-app drag & drop, where a move (not a copy) is expected.
+    /// Returns true if at least one item was moved.
+    @discardableResult
+    func moveFileNodes(_ sourceURLs: [URL], toDirectoryURL destinationDirectoryURL: URL?) -> Bool {
+        !moveFileNodesReturningURLs(sourceURLs, toDirectoryURL: destinationDirectoryURL).isEmpty
+    }
+
+    /// Same as `moveFileNodes(_:toDirectoryURL:)`, returning the resulting URLs
+    /// so callers can follow the items (e.g. re-select them after a ⌘X → ⌘V).
+    @discardableResult
+    private func moveFileNodesReturningURLs(_ sourceURLs: [URL], toDirectoryURL destinationDirectoryURL: URL?) -> [URL] {
+        let destinationURL: URL
+        if let destinationDirectoryURL {
+            destinationURL = destinationDirectoryURL
+        } else if let project = selectedProject {
+            destinationURL = project.directoryPath
+        } else {
+            return []
+        }
+
+        let fm = FileManager.default
+        var isDirectory: ObjCBool = false
+        guard fm.fileExists(atPath: destinationURL.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+            return []
+        }
+
+        var movedURLs: [URL] = []
+        var affectedURLs = Set<URL>()
+        var failures: [String] = []
+
+        for source in sourceURLs {
+            let standardizedSource = source.standardizedFileURL
+            let parentURL = standardizedSource.deletingLastPathComponent()
+
+            // Already in the destination — nothing to do.
+            if parentURL == destinationURL.standardizedFileURL { continue }
+            // Refuse to move a directory into itself or one of its descendants.
+            if isSameOrDescendant(destinationURL, of: standardizedSource) { continue }
+
+            let name = standardizedSource.lastPathComponent
+            var targetURL = destinationURL.appendingPathComponent(name)
+
+            if fm.fileExists(atPath: targetURL.path) {
+                let ext = standardizedSource.pathExtension
+                let base = ext.isEmpty ? name : String(name.dropLast(ext.count + 1))
+                var counter = 2
+                while fm.fileExists(atPath: targetURL.path) {
+                    let candidateName = ext.isEmpty
+                        ? "\(base) \(counter)"
+                        : "\(base) \(counter).\(ext)"
+                    targetURL = destinationURL.appendingPathComponent(candidateName)
+                    counter += 1
+                }
+            }
+
+            do {
+                try fm.moveItem(at: standardizedSource, to: targetURL)
+            } catch {
+                failures.append("\(name): \(error.localizedDescription)")
+                continue
+            }
+
+            updateOpenFilePaths(oldBase: standardizedSource, newBase: targetURL)
+            movedURLs.append(targetURL)
+            affectedURLs.insert(parentURL)
+        }
+
+        if !movedURLs.isEmpty {
+            for parentURL in affectedURLs {
+                refreshDirectory(at: parentURL)
+            }
+            refreshDirectory(at: destinationURL, expand: true)
+        }
+
+        if !failures.isEmpty {
+            let alert = NSAlert()
+            alert.messageText = "Failed to move items"
+            alert.informativeText = failures.joined(separator: "\n")
+            alert.alertStyle = .warning
+            alert.runModal()
+        }
+
+        return movedURLs
+    }
+
+    /// Whether `url` is `base` itself or lives somewhere beneath it.
+    private func isSameOrDescendant(_ url: URL, of base: URL) -> Bool {
+        let path = url.standardizedFileURL.path
+        let basePath = base.standardizedFileURL.path
+        return path == basePath || path.hasPrefix(basePath + "/")
+    }
+
+    /// Reload the children of the tree node representing `url`.
+    /// Falls back to a full tree reload when the directory isn't a visible node
+    /// (e.g. the project root itself, or a collapsed ancestor).
+    private func refreshDirectory(at url: URL, expand: Bool = false) {
+        if let node = findNode(at: url, in: fileTreeRoots), node.isDirectory {
+            node.children = fileTreeService.loadChildren(at: node.url)
+            if expand { node.isExpanded = true }
+        } else {
+            loadFileTree()
+        }
+    }
+
+    /// Begin inline rename for a file tree node.
+    func beginRename(_ node: FileNode) {
+        selectedTreeNodeIds = [node.id]
+        treeSelectionAnchorId = node.id
+        renamingNodeId = node.id
+    }
+
+    /// Begin inline rename for the currently selected tree node (F2). Returns
+    /// whether a rename was started. Only a single selection can be renamed.
+    @discardableResult
+    func beginRenameSelectedTreeNode() -> Bool {
+        guard selectedTreeNodeIds.count == 1, let id = selectedTreeNodeIds.first else { return false }
+        renamingNodeId = id
+        return true
+    }
+
+    /// Cancel any in-progress inline rename.
+    func cancelRename() {
+        renamingNodeId = nil
+    }
+
+    /// Rename a file tree node on disk and refresh the tree.
+    /// Any open tabs pointing at the item (or nested under a renamed directory)
+    /// follow the move so they keep editing the same file.
+    func renameFileNode(_ node: FileNode, to newName: String) {
+        renamingNodeId = nil
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != node.name, !trimmed.contains("/") else { return }
+
+        let oldURL = node.url
+        let newURL = oldURL.deletingLastPathComponent().appendingPathComponent(trimmed)
+        let fm = FileManager.default
+
+        guard !fm.fileExists(atPath: newURL.path) else {
+            presentRenameError(message: "\"\(trimmed)\" already exists.")
             return
         }
+
+        do {
+            try fm.moveItem(at: oldURL, to: newURL)
+        } catch {
+            presentRenameError(message: error.localizedDescription)
+            return
+        }
+
+        updateOpenFilePaths(oldBase: oldURL, newBase: newURL)
 
         if let parent = findParentNode(of: node, in: fileTreeRoots) {
             parent.children = fileTreeService.loadChildren(at: parent.url)
         } else {
             loadFileTree()
         }
+    }
+
+    /// Rewrite open-file URLs after an item moved from `oldBase` to `newBase`.
+    private func updateOpenFilePaths(oldBase: URL, newBase: URL) {
+        let oldPath = oldBase.standardizedFileURL.path
+        for index in openFiles.indices {
+            let filePath = openFiles[index].url.standardizedFileURL.path
+            let updatedURL: URL?
+            if filePath == oldPath {
+                updatedURL = newBase
+            } else if filePath.hasPrefix(oldPath + "/") {
+                let suffix = String(filePath.dropFirst(oldPath.count + 1))
+                updatedURL = newBase.appendingPathComponent(suffix)
+            } else {
+                updatedURL = nil
+            }
+            guard let updatedURL else { continue }
+            let id = openFiles[index].id
+            let kind = openFiles[index].kind
+            openFiles[index].url = updatedURL
+            if kind == .text {
+                openFileWatcher.unwatch(id: id)
+                openFileWatcher.watch(id: id, url: updatedURL)
+            }
+        }
+    }
+
+    private func presentRenameError(message: String) {
+        let l10n = L10n(raw: UserDefaults.standard.string(forKey: "appLanguage") ?? "")
+        let alert = NSAlert()
+        alert.messageText = l10n.rename
+        alert.informativeText = message
+        alert.alertStyle = .warning
+        alert.runModal()
     }
 
     /// Walk the tree to find the parent of a given node.
@@ -1591,6 +2228,24 @@ final class AppState {
                 if let found = findParentNode(of: target, in: children) {
                     return found
                 }
+            }
+        }
+        return nil
+    }
+
+    private func refreshImportedDestination(at destinationURL: URL) {
+        refreshDirectory(at: destinationURL, expand: true)
+    }
+
+    private func findNode(at targetURL: URL, in nodes: [FileNode]) -> FileNode? {
+        let standardizedTarget = targetURL.standardizedFileURL
+        for node in nodes {
+            if node.url.standardizedFileURL == standardizedTarget {
+                return node
+            }
+            if let children = node.children,
+               let found = findNode(at: targetURL, in: children) {
+                return found
             }
         }
         return nil
@@ -1769,7 +2424,7 @@ final class AppState {
         stopSkillCreationPolling()
 
         if processManager.isRunning(sessionId: sessionId) {
-            processManager.stop(sessionId: sessionId)
+            processManager.stop(sessionId: sessionId, reason: "endCreationSession")
         }
         activeSessions.removeAll { $0.id == sessionId }
         processManager.removeProcess(sessionId: sessionId)
@@ -2276,6 +2931,7 @@ final class AppState {
 
     /// Launches a shell session from a preset.
     func startPresetSession(_ preset: ShellPreset) {
+        markShellPresetUsed(preset)
         let dir = preset.directory.isEmpty ? nil : URL(filePath: preset.directory)
         startShellSession(
             shell: preset.shell,
@@ -2302,6 +2958,15 @@ final class AppState {
 
     func deleteShellPreset(_ preset: ShellPreset) {
         shellPresets.removeAll { $0.id == preset.id }
+        shellPresetService.savePresets(shellPresets)
+    }
+
+    /// Moves the preset to the front so the list stays ordered by most recent use,
+    /// matching the sessions tab.
+    private func markShellPresetUsed(_ preset: ShellPreset) {
+        guard let idx = shellPresets.firstIndex(where: { $0.id == preset.id }), idx != 0 else { return }
+        let item = shellPresets.remove(at: idx)
+        shellPresets.insert(item, at: 0)
         shellPresetService.savePresets(shellPresets)
     }
 
@@ -2446,19 +3111,21 @@ final class AppState {
         if session.agentId == session.id {
             startStandaloneSession(
                 name: session.agentName,
-                workingDirectory: session.workingDirectory
+                workingDirectory: session.workingDirectory,
+                provider: session.cliProviderType
             )
             return
         }
 
         if let agent = agents.first(where: { $0.id == session.agentId })
                 ?? agents.first(where: { $0.filePath?.path(percentEncoded: false) == session.agentFilePath }) {
-            startAgent(agent)
+            startAgent(agent, provider: session.cliProviderType)
         } else {
             // Agent not found (e.g. different project selected) — duplicate as standalone
             startStandaloneSession(
                 name: session.agentName,
-                workingDirectory: session.workingDirectory
+                workingDirectory: session.workingDirectory,
+                provider: session.cliProviderType
             )
         }
     }
@@ -2726,7 +3393,7 @@ final class AppState {
         if let session = activeSessions.first(where: { $0.id == sessionId }),
            session.isShellSession {
             if processManager.isRunning(sessionId: sessionId) {
-                processManager.stop(sessionId: sessionId)
+                processManager.stop(sessionId: sessionId, reason: "closeTab(shell)")
             }
             processManager.removeProcess(sessionId: sessionId)
             activeSessions.removeAll { $0.id == sessionId }
@@ -2747,7 +3414,7 @@ final class AppState {
         }
 
         if processManager.isRunning(sessionId: sessionId) {
-            processManager.stop(sessionId: sessionId)
+            processManager.stop(sessionId: sessionId, reason: "closeTab")
         }
 
         // Set endedAt immediately. The resumeId will be filled in later by
@@ -2760,6 +3427,7 @@ final class AppState {
 
         // Clean up scheduled session tracking
         scheduleManager.handleSessionTerminated(sessionId: sessionId)
+        pendingHandoffPrompts.removeValue(forKey: sessionId)
 
         // Memory extraction is handled by onSessionTerminated callback
         // (fires after the process actually exits, giving us the claudeResumeId for JSONL lookup)
@@ -3026,6 +3694,7 @@ final class AppState {
 
             // Clean up scheduled session tracking
             self.scheduleManager.handleSessionTerminated(sessionId: sessionId)
+            self.pendingHandoffPrompts.removeValue(forKey: sessionId)
 
             // Clean up creation session when the process ends naturally
             if sessionId == self.creationSession?.id {
@@ -3081,31 +3750,39 @@ final class AppState {
                     }
                 }
 
-                let provider = await MainActor.run { self.memoryExtractionProvider() }
+                let (provider, model) = await MainActor.run {
+                    let p = self.memoryExtractionProvider()
+                    return (p, self.memoryExtractionModel(for: p))
+                }
 
                 // Primary: use JSONL transcript (structured, complete)
                 if let sid = claudeSessionId,
                    let jsonlPath = MemoryExtractor.resolveTranscriptPath(
                        claudeSessionId: sid, workingDirectory: workingDir) {
-                    print("[Memory] onSessionTerminated: using JSONL transcript for \(agent.name) (\(jsonlPath.lastPathComponent)) via \(provider.binaryName)")
+                    print("[Memory] onSessionTerminated: using JSONL transcript for \(agent.name) (\(jsonlPath.lastPathComponent)) via \(provider.binaryName)/\(model.shortName)")
+                    MemoryExtractionLog.shared.log("[\(agent.name)] Session ended — extracting from JSONL \(jsonlPath.lastPathComponent) via \(provider.binaryName)/\(model.shortName)")
                     await self.memoryExtractor.extractFromTranscript(
                         jsonlPath: jsonlPath,
                         agentName: agent.name,
                         agent: agent,
-                        provider: provider
+                        provider: provider,
+                        model: model
                     )
                 }
                 // Fallback: use terminal text (lossy but always available)
                 else if let text = terminalText, !text.isEmpty {
-                    print("[Memory] onSessionTerminated: JSONL not found, falling back to terminal text for \(agent.name) via \(provider.binaryName)")
+                    print("[Memory] onSessionTerminated: JSONL not found, falling back to terminal text for \(agent.name) via \(provider.binaryName)/\(model.shortName)")
+                    MemoryExtractionLog.shared.warn("[\(agent.name)] Session ended — JSONL not found (resumeId: \(claudeSessionId ?? "nil")), falling back to terminal text via \(provider.binaryName)/\(model.shortName)")
                     await self.memoryExtractor.extractFromTerminalText(
                         terminalText: text,
                         agentName: agent.name,
                         agent: agent,
-                        provider: provider
+                        provider: provider,
+                        model: model
                     )
                 } else {
                     print("[Memory] onSessionTerminated: no transcript or terminal text for \(agent.name)")
+                    MemoryExtractionLog.shared.error("[\(agent.name)] Session ended — no transcript and no terminal text, nothing to extract (resumeId: \(claudeSessionId ?? "nil"))")
                 }
             }
         }
@@ -3156,18 +3833,22 @@ final class AppState {
             }
 
             let provider = memoryExtractionProvider()
+            let model = memoryExtractionModel(for: provider)
             Task {
                 if let jsonlPath = MemoryExtractor.resolveTranscriptPath(
                     claudeSessionId: resumeId, workingDirectory: workingDir) {
-                    print("[Memory] Pending extraction: \(agent.name) from \(jsonlPath.lastPathComponent) via \(provider.binaryName)")
+                    print("[Memory] Pending extraction: \(agent.name) from \(jsonlPath.lastPathComponent) via \(provider.binaryName)/\(model.shortName)")
+                    MemoryExtractionLog.shared.log("[\(agent.name)] Pending extraction at launch — JSONL \(jsonlPath.lastPathComponent) via \(provider.binaryName)/\(model.shortName)")
                     await memoryExtractor.extractFromTranscript(
                         jsonlPath: jsonlPath,
                         agentName: agent.name,
                         agent: agent,
-                        provider: provider
+                        provider: provider,
+                        model: model
                     )
                 } else {
                     print("[Memory] Pending extraction: JSONL not found for \(agent.name) (resumeId: \(resumeId))")
+                    MemoryExtractionLog.shared.warn("[\(agent.name)] Pending extraction at launch — JSONL not found (resumeId: \(resumeId)), skipping")
                 }
                 await MainActor.run {
                     sessionHistoryService.markMemoryExtracted(sessionId: record.id)
@@ -3245,10 +3926,12 @@ final class AppState {
             self?.sessionHistoryService.setInitialPrompt(sessionId: sessionId, prompt: prompt)
         }
 
-        // Wire idle detection → prompt delivery
+        // Wire idle detection → prompt delivery (scheduled sessions and
+        // split-session handoffs share the same first-idle trigger)
         processManager.onStatusChanged = { [weak self] sessionId, status in
             if status == .waitingForInput {
                 self?.scheduleManager.handleSessionBecameIdle(sessionId: sessionId)
+                self?.deliverPendingHandoffPrompt(sessionId: sessionId)
             }
         }
 
@@ -3258,6 +3941,70 @@ final class AppState {
         DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
             self?.scheduleManager.executeMissedSchedules()
         }
+    }
+
+    // MARK: - Session Control (conclawd helper CLI)
+
+    private func setupSessionControlServer() {
+        sessionControlServer.onRequest = { [weak self] request in
+            guard let self else {
+                return SessionControlResponse(ok: false, sessionId: nil, error: "Conclawd is shutting down")
+            }
+            return self.handleSessionControlRequest(request)
+        }
+        sessionControlServer.start()
+    }
+
+    /// Handles a `conclawd split` request: opens a new session tab (without
+    /// stealing focus from the requesting session) and queues the handoff
+    /// prompt for delivery on the session's first idle.
+    private func handleSessionControlRequest(_ request: SessionControlRequest) -> SessionControlResponse {
+        guard request.command == "split" else {
+            return SessionControlResponse(ok: false, sessionId: nil, error: "unknown command '\(request.command)'")
+        }
+        guard let prompt = request.prompt,
+              !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return SessionControlResponse(ok: false, sessionId: nil, error: "prompt is required")
+        }
+
+        var workingDirectory: URL?
+        if let cwd = request.cwd, !cwd.isEmpty {
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: cwd, isDirectory: &isDirectory),
+                  isDirectory.boolValue else {
+                return SessionControlResponse(ok: false, sessionId: nil, error: "working directory not found: \(cwd)")
+            }
+            workingDirectory = URL(fileURLWithPath: cwd)
+        }
+
+        let trimmedTitle = request.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        do {
+            let sessionId = try processManager.startStandalone(
+                workingDirectory: workingDirectory?.path(percentEncoded: false)
+            )
+            let session = AgentSession(
+                id: sessionId,
+                agentId: sessionId, // sentinel — no real agent
+                agentName: trimmedTitle.isEmpty ? "Split Session" : trimmedTitle,
+                workingDirectory: workingDirectory ?? selectedProject?.directoryPath,
+                paneId: activePaneId
+            )
+            activeSessions.append(session)
+            sessionHistoryService.recordSessionStart(session: session)
+            pendingHandoffPrompts[sessionId] = prompt
+            return SessionControlResponse(ok: true, sessionId: sessionId.uuidString, error: nil)
+        } catch {
+            return SessionControlResponse(ok: false, sessionId: nil, error: error.localizedDescription)
+        }
+    }
+
+    /// Sends a queued handoff prompt once the split session first goes idle.
+    /// Claude CLI runs in raw terminal mode, so `\r` (not `\n`) submits input.
+    private func deliverPendingHandoffPrompt(sessionId: UUID) {
+        guard let prompt = pendingHandoffPrompts.removeValue(forKey: sessionId) else { return }
+        processManager.sendInput(sessionId: sessionId, text: prompt + "\r")
+        processManager.notifyPromptSubmitted(sessionId: sessionId, promptText: prompt)
+        sessionHistoryService.setInitialPrompt(sessionId: sessionId, prompt: prompt)
     }
 
     // MARK: - Git
@@ -3422,6 +4169,7 @@ final class AppState {
             throw AICommitMessageGenerator.GeneratorError.claudeNotFound
         }
         let provider = commitMessageProvider()
+        let model = commitMessageModel(for: provider)
         guard let cliPath = processManager.cliPathResolver.resolve(for: provider) else {
             throw AICommitMessageGenerator.GeneratorError.cliNotFound(provider)
         }
@@ -3434,6 +4182,7 @@ final class AppState {
         return try await AICommitMessageGenerator.generate(
             cliPath: cliPath,
             provider: provider,
+            model: model,
             diffSummary: diffSummary
         )
     }

@@ -11,7 +11,8 @@ struct ProjectSelectorView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
 
             Button {
-                withAnimation { showSidebar = false }
+                // Instant — avoid animating the center pane width (SwiftTerm reflow per frame).
+                showSidebar = false
             } label: {
                 Image(systemName: "sidebar.left")
                     .font(.system(size: 11))

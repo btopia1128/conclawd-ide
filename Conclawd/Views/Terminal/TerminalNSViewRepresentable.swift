@@ -25,7 +25,7 @@ class TerminalHostView: NSView {
     override func viewDidMoveToSuperview() {
         super.viewDidMoveToSuperview()
         if superview != nil {
-            registerForDraggedTypes([.fileURL])
+            registerForDraggedTypes([.fileURL, .URL])
         }
     }
 
@@ -44,11 +44,12 @@ class TerminalHostView: NSView {
         return terminal.performDragOperation(sender)
     }
 
+    /// Type check only — actual data may still be promised during the drag
+    /// (SwiftUI .onDrag item providers deliver data at drop time), so reading
+    /// objects here would reject in-app drags from the file tree.
     private func hasFileURLs(in info: NSDraggingInfo) -> Bool {
-        guard let urls = info.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [
-            .urlReadingFileURLsOnly: true
-        ]) as? [URL] else { return false }
-        return !urls.isEmpty
+        if info.draggingPasteboard.availableType(from: [.fileURL, .URL]) != nil { return true }
+        return info.draggingSource != nil && FileDragSession.isActive
     }
 
     func showTerminal(for sessionId: UUID?) {
@@ -120,7 +121,13 @@ struct TerminalHostRepresentable: NSViewRepresentable {
     }
 
     func updateNSView(_ host: TerminalHostView, context: Context) {
-        host.layer?.backgroundColor = TerminalTheme.current.background.cgColor
+        // Only touch the layer when the color actually changed. updateNSView can fire
+        // every frame during split-divider drags / window resizes; a redundant
+        // backgroundColor assignment forces a needless layer redraw each time.
+        let bg = TerminalTheme.current.background.cgColor
+        if host.layer?.backgroundColor != bg {
+            host.layer?.backgroundColor = bg
+        }
         host.configure(processManager: processManager)
         host.showTerminal(for: selectedSessionId)
     }

@@ -21,15 +21,16 @@ enum AICommitMessageGenerator {
     static func generate(
         cliPath: String,
         provider: CLIProviderType,
+        model: AgentModel,
         diffSummary: String
     ) async throws -> String {
         let prompt = buildPrompt(diffSummary: diffSummary)
         switch provider {
         case .claude:
-            let data = try await executeClaudePrint(claudePath: cliPath, prompt: prompt)
+            let data = try await executeClaudePrint(claudePath: cliPath, model: model, prompt: prompt)
             return parseClaudeResult(data)
         case .codex:
-            return try await executeCodexExec(codexPath: cliPath, prompt: prompt)
+            return try await executeCodexExec(codexPath: cliPath, model: model, prompt: prompt)
         }
     }
 
@@ -52,7 +53,7 @@ enum AICommitMessageGenerator {
 
     // MARK: - Claude
 
-    private static func executeClaudePrint(claudePath: String, prompt: String) async throws -> Data {
+    private static func executeClaudePrint(claudePath: String, model: AgentModel, prompt: String) async throws -> Data {
         let process = Process()
         let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
         let escapedClaude = claudePath.replacingOccurrences(of: " ", with: "\\ ")
@@ -61,10 +62,12 @@ enum AICommitMessageGenerator {
             .appending(path: "commit_msg_\(UUID().uuidString.prefix(8)).txt")
         try prompt.write(to: tempFile, atomically: true, encoding: .utf8)
 
-        let command = "cat '\(tempFile.path(percentEncoded: false))' | \(escapedClaude) -p --model \(AgentModel.haikuModelId) --output-format json --setting-sources \"\""
+        let modelId = (model == .inherit ? AgentModel.haiku : model).cliModelId(for: .claude)
+        let command = "cat '\(tempFile.path(percentEncoded: false))' | \(escapedClaude) -p --model \(modelId) --output-format json --setting-sources \"\""
 
         process.executableURL = URL(fileURLWithPath: shell)
         process.arguments = ["-l", "-c", command]
+        process.environment = CLIPathResolver.augmentedEnvironment(cliPath: claudePath)
 
         let stdout = Pipe()
         let stderr = Pipe()
@@ -113,7 +116,7 @@ enum AICommitMessageGenerator {
 
     // MARK: - Codex
 
-    private static func executeCodexExec(codexPath: String, prompt: String) async throws -> String {
+    private static func executeCodexExec(codexPath: String, model: AgentModel, prompt: String) async throws -> String {
         let process = Process()
         let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
         let escapedCodex = codexPath.replacingOccurrences(of: " ", with: "\\ ")
@@ -127,10 +130,13 @@ enum AICommitMessageGenerator {
         // `codex exec` reads prompt from stdin and writes the final agent message to -o file.
         // --ephemeral: don't persist a session file; --sandbox read-only: prevent any writes;
         // --skip-git-repo-check: allow running anywhere.
-        let command = "cat '\(promptFile.path(percentEncoded: false))' | \(escapedCodex) exec --ephemeral --sandbox read-only --skip-git-repo-check --color never -m \(AgentModel.haiku.cliModelId(for: .codex)) -o '\(outputFile.path(percentEncoded: false))' >/dev/null 2>&1"
+        let resolvedModel: AgentModel = model == .inherit ? .haiku : model
+        let modelId = resolvedModel.cliModelId(for: .codex)
+        let command = "cat '\(promptFile.path(percentEncoded: false))' | \(escapedCodex) exec --ephemeral --sandbox read-only --skip-git-repo-check --color never -m \(modelId) -o '\(outputFile.path(percentEncoded: false))' >/dev/null 2>&1"
 
         process.executableURL = URL(fileURLWithPath: shell)
         process.arguments = ["-l", "-c", command]
+        process.environment = CLIPathResolver.augmentedEnvironment(cliPath: codexPath)
 
         try process.run()
 

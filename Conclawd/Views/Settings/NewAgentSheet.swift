@@ -9,11 +9,12 @@ struct NewAgentSheet: View {
     @State private var name = ""
     @State private var description = ""
     @State private var model: AgentModel = .inherit
-    @State private var scope: AgentScope = .user
+    @State private var scope: AgentScope = .project
     @State private var projectDirectory: URL?
     @State private var customFlags: String = ""
     @State private var workingDirectory: URL?
     @State private var defaultProvider: CLIProviderType = .claude
+    @State private var permissionMode: PermissionMode = .default
     @State private var isManual: Bool = false
     @State private var rawCommand: String = ""
 
@@ -160,6 +161,12 @@ struct NewAgentSheet: View {
                                 Text(m == .inherit ? l10n.defaultLabel : m.displayName(for: defaultProvider)).tag(m)
                             }
                         }
+
+                        Picker(l10n.permission, selection: $permissionMode) {
+                            ForEach(PermissionMode.allCases, id: \.self) { mode in
+                                Text(mode.displayName).tag(mode)
+                            }
+                        }
                     }
 
                     // -- Working Directory --
@@ -220,7 +227,8 @@ struct NewAgentSheet: View {
                         localDirectory: workingDirectory,
                         customFlags: isManual ? nil : (trimmedFlags.isEmpty ? nil : trimmedFlags),
                         defaultProvider: defaultProvider,
-                        rawCommand: isManual ? (trimmedRaw.isEmpty ? nil : trimmedRaw) : nil
+                        rawCommand: isManual ? (trimmedRaw.isEmpty ? nil : trimmedRaw) : nil,
+                        permissionMode: permissionMode
                     )
                     dismiss()
                 }
@@ -232,6 +240,10 @@ struct NewAgentSheet: View {
         .padding()
         .frame(width: 440)
         .task {
+            // Project scope is the default, but it needs a project to target.
+            if appState.selectedProject == nil {
+                scope = .user
+            }
             if scope == .project {
                 workingDirectory = resolvedProjectDirectory
             }

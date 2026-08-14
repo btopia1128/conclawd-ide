@@ -39,7 +39,8 @@ struct SkillEditorView: View {
             language: "markdown",
             showLineNumbers: state.editorShowLineNumbers,
             wordWrap: state.editorWordWrap,
-            highlightSkillVariables: true
+            highlightSkillVariables: true,
+            placeholder: l10n.skillContentPlaceholder
         )
         .filePathDrop(text: Binding(
             get: { state.editingSkill?.content ?? "" },
