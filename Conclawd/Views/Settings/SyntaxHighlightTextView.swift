@@ -20,6 +20,54 @@ struct SyntaxHighlightTextView: NSViewRepresentable {
     /// Triggers updateNSView when appearance mode changes (e.g. Light ↔ Claude).
     @AppStorage("appearanceMode") private var appearanceMode: String = "dark"
 
+    /// Past any of these limits the document is shown as plain text.
+    ///
+    /// Highlighting a large document blocks the main thread: Highlightr builds one
+    /// attributed string for the whole file, `ensureAttributesAreFixedInRange:` then
+    /// walks it on every layout pass, and a single very long line makes
+    /// NSLayoutManager's glyph layout pathological. A 17MB JSON with a 52k-character
+    /// line pegged the main thread and grew the process to a 50GB footprint.
+    ///
+    /// The line-length limit is the one that matters most: minified JSON stays under
+    /// modest line counts while packing a whole document onto one line, so a check on
+    /// size alone would let it through.
+    static let highlightByteLimit = 1_000_000
+    static let highlightLineLimit = 20_000
+    static let highlightLineLengthLimit = 5_000
+
+    /// Whether `text` is small enough to highlight without hanging the main thread.
+    ///
+    /// Lengths are counted in UTF-8 bytes — the limits are guard rails, not exact
+    /// character counts. The byte check runs first so the scan below only ever walks
+    /// a document already known to be under `highlightByteLimit`.
+    static func isHighlightable(_ text: String) -> Bool {
+        guard text.utf8.count <= highlightByteLimit else { return false }
+        var lines = 1
+        var lineLength = 0
+        for byte in text.utf8 {
+            if byte == UInt8(ascii: "\n") {
+                lines += 1
+                if lines > highlightLineLimit { return false }
+                lineLength = 0
+            } else {
+                lineLength += 1
+                if lineLength > highlightLineLengthLimit { return false }
+            }
+        }
+        return true
+    }
+
+    /// False once the document trips `isHighlightable`, which drops the view to plain
+    /// text: no Highlightr pass, and `CodeAttributedString` gets a nil language so it
+    /// stops re-highlighting in the background.
+    private var isHighlightingEnabled: Bool { Self.isHighlightable(text) }
+
+    /// The language actually handed to Highlightr. Nil both for genuinely unknown file
+    /// types (where Highlightr auto-detects) and for oversized documents — the call
+    /// sites gate on `isHighlightingEnabled` so the oversized case skips highlighting
+    /// entirely rather than paying for auto-detection.
+    private var effectiveLanguage: String? { isHighlightingEnabled ? language : nil }
+
     private static let defaultInsetX: CGFloat = 16
     private static let gutterInsetX: CGFloat = 44
 
@@ -45,11 +93,26 @@ struct SyntaxHighlightTextView: NSViewRepresentable {
         let highlightr = Highlightr()!
         applyTheme(highlightr)
 
-        let textStorage = CodeAttributedString(highlightr: highlightr)
-        textStorage.highlightDelegate = context.coordinator
-        textStorage.language = language
+        // Oversized documents get a plain NSTextStorage rather than Highlightr's
+        // CodeAttributedString. Disabling highlighting alone is not enough: every
+        // `-[NSTextStorage string]` the typesetter makes lands on
+        // CodeAttributedString's `var string: String` override, which bridges the
+        // whole NSString to a Swift String and back. On an 11MB document AppKit
+        // makes that call thousands of times per layout pass, which is what pegged
+        // the main thread even with highlighting off.
+        let codeStorage: CodeAttributedString? = isHighlightingEnabled
+            ? CodeAttributedString(highlightr: highlightr)
+            : nil
+        let textStorage: NSTextStorage = codeStorage ?? NSTextStorage()
+        codeStorage?.highlightDelegate = context.coordinator
+        codeStorage?.language = effectiveLanguage
 
         let layoutManager = NSLayoutManager()
+        // NSTextView leaves background layout on, so after an oversized document is
+        // displayed NSLayoutManager keeps typesetting the rest of it during run loop
+        // idle — minutes of main-thread work for a file the user is only scanning.
+        // Layout on demand instead; only the visible range gets typeset.
+        layoutManager.backgroundLayoutEnabled = isHighlightingEnabled
         textStorage.addLayoutManager(layoutManager)
 
         let textContainer = NSTextContainer()
@@ -88,15 +151,12 @@ struct SyntaxHighlightTextView: NSViewRepresentable {
         // Configure gutter theme
         configureGutterTheme(textView, highlightr: highlightr)
 
-        // Pre-highlight
-        if let highlighted = highlightr.highlight(text, as: language) {
-            textStorage.beginEditing()
-            textStorage.setAttributedString(highlighted)
-            textStorage.endEditing()
-        } else {
-            textView.string = text
-        }
-
+        // The scroll view has to adopt the text view BEFORE the text goes in.
+        // Assigning `documentView` a text view that already holds the document
+        // makes AppKit lay the whole thing out synchronously to size the document
+        // view; filling an already-installed text view instead lets layout stay
+        // lazy. Measured on an 11MB JSON: 64ms this way, 28,356ms the other way
+        // round — the single assignment was the whole hang.
         let scrollView = NSScrollView()
         scrollView.documentView = textView
         scrollView.hasVerticalScroller = true
@@ -104,10 +164,20 @@ struct SyntaxHighlightTextView: NSViewRepresentable {
         scrollView.drawsBackground = false
         scrollView.autohidesScrollers = true
 
+        // Pre-highlight (skipped entirely for oversized documents)
+        if isHighlightingEnabled, let highlighted = highlightr.highlight(text, as: language) {
+            textStorage.beginEditing()
+            textStorage.setAttributedString(highlighted)
+            textStorage.endEditing()
+        } else {
+            textView.string = text
+        }
+        context.coordinator.appliedText = text
+
         context.coordinator.attach(to: scrollView)
         context.coordinator.textView = textView
         context.coordinator.highlightr = highlightr
-        context.coordinator.codeStorage = textStorage
+        context.coordinator.codeStorage = codeStorage
         textStorage.delegate = context.coordinator
 
         textView.onMouseDown = onMouseDown
@@ -133,13 +203,13 @@ struct SyntaxHighlightTextView: NSViewRepresentable {
             highlightr.setTheme(to: expectedTheme)
             textView.backgroundColor = Self.editorBackgroundColor(for: textView, highlightr: highlightr)
             context.coordinator.currentTheme = themeKey
-            context.coordinator.codeStorage?.language = language
+            context.coordinator.codeStorage?.language = effectiveLanguage
             configureGutterTheme(textView, highlightr: highlightr)
         }
 
         // Language (only set when changed to avoid redundant background re-highlighting)
-        if context.coordinator.codeStorage?.language != language {
-            context.coordinator.codeStorage?.language = language
+        if context.coordinator.codeStorage?.language != effectiveLanguage {
+            context.coordinator.codeStorage?.language = effectiveLanguage
         }
 
         // Word wrap
@@ -168,12 +238,13 @@ struct SyntaxHighlightTextView: NSViewRepresentable {
         }
 
         // Text sync
-        if textView.string != text {
+        if context.coordinator.appliedText != text {
             context.coordinator.isUpdating = true
             // Suppress CodeAttributedString's background re-highlighting during manual update
             // to avoid concurrent JSContext access (Highlightr is not thread-safe).
             context.coordinator.suppressCodeHighlighting = true
-            if let highlighted = highlightr.highlight(text, as: language),
+            if isHighlightingEnabled,
+               let highlighted = highlightr.highlight(text, as: language),
                let codeStorage = context.coordinator.codeStorage {
                 codeStorage.beginEditing()
                 codeStorage.setAttributedString(highlighted)
@@ -181,6 +252,7 @@ struct SyntaxHighlightTextView: NSViewRepresentable {
             } else {
                 textView.string = text
             }
+            context.coordinator.appliedText = text
             context.coordinator.suppressCodeHighlighting = false
             context.coordinator.isUpdating = false
         }
@@ -216,6 +288,12 @@ struct SyntaxHighlightTextView: NSViewRepresentable {
         var highlightr: Highlightr?
         var codeStorage: CodeAttributedString?
         var isUpdating = false
+        /// The text last written into the view, so `updateNSView` can skip the
+        /// round trip through `textView.string` — reading that bridges the whole
+        /// NSString to a Swift String, and comparing it costs another full pass.
+        /// SwiftUI hands back the same String instance when nothing changed, so
+        /// this comparison usually settles on a pointer check.
+        var appliedText: String?
         var currentTheme: String = ""
         weak var scrollView: NSScrollView?
         private var scrollObserver: NSObjectProtocol?
@@ -255,7 +333,12 @@ struct SyntaxHighlightTextView: NSViewRepresentable {
 
         func textDidChange(_ notification: Notification) {
             guard !isUpdating, let textView = textView else { return }
-            parent.text = textView.string
+            let updated = textView.string
+            // Record what the view now holds before publishing it. Without this the
+            // next updateNSView would see `appliedText` still on the pre-edit value,
+            // rewrite the whole document, and throw away the selection.
+            appliedText = updated
+            parent.text = updated
         }
 
         func attach(to scrollView: NSScrollView) {
