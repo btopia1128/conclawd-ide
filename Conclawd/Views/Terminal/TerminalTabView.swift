@@ -39,6 +39,16 @@ struct TerminalTabView: View {
     /// Whether this pane has any open files.
     private var paneFileEditorTabOpen: Bool { !paneOpenFiles.isEmpty }
 
+    /// Make this pane the active one. Tab-bar actions call this first so the
+    /// AppState forwarding accessors (`centerPane`, `closeAgentEditor()`, …)
+    /// target the pane the user actually clicked, not whichever pane happened
+    /// to be active before.
+    private func activatePane() {
+        if appState.activePaneId != paneId {
+            appState.activePaneId = paneId
+        }
+    }
+
     // Org chart state (owned here so tab bar can show controls)
     @State private var orgChartViewModel = OrgChartViewModel()
     @State private var orgChartFilter: OrgChartFilter = .project
@@ -555,6 +565,7 @@ struct TerminalTabView: View {
             }
 
             Button {
+                activatePane()
                 onClose()
             } label: {
                 Image(systemName: "xmark")
@@ -569,6 +580,7 @@ struct TerminalTabView: View {
         .cornerRadius(6)
         .contentShape(Rectangle())
         .onTapGesture {
+            activatePane()
             onTap?()
         }
     }
@@ -593,7 +605,8 @@ struct TerminalTabView: View {
                 ZStack {
                     TerminalHostRepresentable(
                         selectedSessionId: displayedSessionId,
-                        processManager: appState.processManager
+                        processManager: appState.processManager,
+                        onMouseDown: activatePane
                     )
                     .opacity(0.3)
 
@@ -623,7 +636,8 @@ struct TerminalTabView: View {
 
                     TerminalHostRepresentable(
                         selectedSessionId: displayedSessionId,
-                        processManager: appState.processManager
+                        processManager: appState.processManager,
+                        onMouseDown: activatePane
                     )
                     .overlay(alignment: .bottomTrailing) {
                         attachFileButton
@@ -854,6 +868,7 @@ struct TerminalTabView: View {
             renamingSessionId = session.id
         }
         .onTapGesture(count: 1) {
+            activatePane()
             appState.updatePane(paneId) {
                 $0.selectedSessionId = session.id
                 $0.centerPane = .terminal
@@ -891,6 +906,7 @@ struct TerminalTabView: View {
                 if !appState.processManager.isRunning(sessionId: session.id)
                     && appState.canResumeSession(sessionId: session.id) {
                     Button(l10n.resume) {
+                        activatePane()
                         appState.resumeSession(sessionId: session.id)
                     }
                 }
@@ -908,6 +924,7 @@ struct TerminalTabView: View {
 
                 if !session.isCreationSession {
                     Button(l10n.duplicate) {
+                        activatePane()
                         appState.duplicateSession(sessionId: session.id)
                     }
                 }
@@ -1011,6 +1028,7 @@ struct TerminalTabView: View {
         switch file.kind {
         case .image: return "photo"
         case .video: return "play.rectangle"
+        case .audio: return "waveform"
         case .text: return "doc.text"
         }
     }
@@ -1019,6 +1037,7 @@ struct TerminalTabView: View {
         switch file.kind {
         case .image: return .green
         case .video: return .purple
+        case .audio: return .teal
         case .text: break
         }
         switch file.fileExtension.lowercased() {

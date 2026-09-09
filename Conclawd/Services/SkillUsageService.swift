@@ -1,5 +1,12 @@
 import Foundation
 
+/// A single logged skill invocation.
+struct SkillUsageEntry: Identifiable {
+    let id = UUID()
+    let skill: String
+    let date: Date
+}
+
 /// Tracks skill usage by installing a Claude Code PostToolUse hook
 /// that logs each Skill invocation to a JSONL file.
 @Observable
@@ -9,6 +16,7 @@ final class SkillUsageService {
     // MARK: - State
 
     private(set) var usageCounts: [String: Int] = [:]
+    private(set) var usageEntries: [SkillUsageEntry] = []
 
     // MARK: - Paths
 
@@ -35,28 +43,39 @@ final class SkillUsageService {
     // MARK: - Usage Counts
 
     func loadUsageCounts() {
-        guard FileManager.default.fileExists(atPath: logURL.path(percentEncoded: false)) else {
-            usageCounts = [:]
-            return
-        }
-        guard let data = try? Data(contentsOf: logURL),
+        guard FileManager.default.fileExists(atPath: logURL.path(percentEncoded: false)),
+              let data = try? Data(contentsOf: logURL),
               let text = String(data: data, encoding: .utf8) else {
             usageCounts = [:]
+            usageEntries = []
             return
         }
 
+        let isoFormatter = ISO8601DateFormatter()
         var counts: [String: Int] = [:]
+        var entries: [SkillUsageEntry] = []
         for line in text.components(separatedBy: .newlines) where !line.isEmpty {
             guard let lineData = line.data(using: .utf8),
                   let json = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any],
                   let skill = json["skill"] as? String, !skill.isEmpty else { continue }
             counts[skill, default: 0] += 1
+            if let ts = json["timestamp"] as? String,
+               let date = isoFormatter.date(from: ts) {
+                entries.append(SkillUsageEntry(skill: skill, date: date))
+            }
         }
         usageCounts = counts
+        usageEntries = entries
     }
 
     func count(for skillName: String) -> Int {
         usageCounts[skillName, default: 0]
+    }
+
+    /// Entries on or after the given date (nil = all).
+    func entries(since date: Date?) -> [SkillUsageEntry] {
+        guard let date else { return usageEntries }
+        return usageEntries.filter { $0.date >= date }
     }
 
     // MARK: - Hook Management
@@ -97,6 +116,16 @@ final class SkillUsageService {
             enabled: true,
             scriptPath: hookScriptURL.path(percentEncoded: false)
         )
+    }
+
+    /// Re-installs the hook if an earlier install wrote the script path
+    /// unquoted — the hook command runs through a shell, so the space in
+    /// "Application Support" made every invocation fail silently.
+    func repairHookIfNeeded() {
+        guard isHookInstalled,
+              let command = ClaudeSettingsService.shared.skillUsageHookCommand(),
+              !command.hasPrefix("\"") else { return }
+        installHook()
     }
 
     func uninstallHook() {

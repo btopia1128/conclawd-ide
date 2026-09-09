@@ -17,6 +17,8 @@ struct MediaPreviewView: View {
                 imagePreview
             case .video:
                 videoPreview
+            case .audio:
+                audioPreview
             case .text:
                 EmptyView()
             }
@@ -74,6 +76,26 @@ struct MediaPreviewView: View {
     private var videoPreview: some View {
         VideoPlayer(player: AVPlayer(url: file.url))
             .background(Color.black)
+    }
+
+    // MARK: - Audio Preview
+
+    private var audioPreview: some View {
+        VStack(spacing: 24) {
+            Spacer()
+            Image(systemName: "waveform")
+                .font(.system(size: 48))
+                .foregroundStyle(Color.appIconMuted)
+            Text(file.fileName)
+                .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(Color.appSecondary)
+            InlineAudioPlayerView(url: file.url)
+                .frame(maxWidth: 420)
+                .frame(height: 44)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .themedBackground(Color.appSurface)
     }
 
     // MARK: - Bottom Bar
@@ -201,5 +223,24 @@ struct MediaPreviewView: View {
         guard let attrs = try? FileManager.default.attributesOfItem(atPath: file.url.path),
               let size = attrs[.size] as? UInt64 else { return nil }
         return ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file)
+    }
+}
+
+/// Native inline audio player (play/pause + scrubber) backed by AVPlayerView.
+private struct InlineAudioPlayerView: NSViewRepresentable {
+    let url: URL
+
+    func makeNSView(context: Context) -> AVPlayerView {
+        let view = AVPlayerView()
+        view.player = AVPlayer(url: url)
+        view.controlsStyle = .inline
+        view.showsFullScreenToggleButton = false
+        return view
+    }
+
+    func updateNSView(_ nsView: AVPlayerView, context: Context) {
+        guard (nsView.player?.currentItem?.asset as? AVURLAsset)?.url != url else { return }
+        nsView.player?.pause()
+        nsView.player = AVPlayer(url: url)
     }
 }

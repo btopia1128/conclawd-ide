@@ -51,7 +51,6 @@ struct ContentView: View {
         .background {
             WindowAccessor(title: appState.windowTitle)
             FileCreationShortcutMonitor(
-                canCreate: appState.selectedProject != nil,
                 onNewFile: { appState.promptCreateFile() },
                 onNewFolder: { appState.promptCreateDirectory() }
             )
@@ -108,51 +107,35 @@ private struct CenterPaneArea: View {
 
     var body: some View {
         if appState.secondaryPane != nil {
-            // Width comes from a background measurement (see `widthReader`)
-            // rather than from a container `GeometryReader`. A container reader
-            // reports a stale width when a sibling (the right inspector) is
-            // inserted/removed with an animated transition, which made the
-            // secondary pane bleed under the inspector on open and leave a
-            // blank gap on close. The resolved background size always reflects
-            // the real available width.
-            let usable = max(1, availableWidth - dividerWidth)
+            // The pane widths are resolved by `SplitPaneLayout` inside the same
+            // layout pass, from the bounds SwiftUI actually hands the container.
+            // Earlier versions measured the width with a GeometryReader and fed
+            // it back through @State: that update lands one frame after the
+            // available width changes (inserting / removing the right
+            // inspector), so the panes briefly kept their old fixed widths and
+            // bled under the inspector or left a gap.
             let fraction = liveFraction ?? secondaryPaneFraction
-            let primaryWidth = max(160, min(usable - 160, usable * fraction)).rounded()
-            let secondaryWidth = max(0, usable - primaryWidth)
-            // The width is measured from a clear container view that is pinned to
-            // the real available space (`maxWidth: .infinity`), NOT from the pane
-            // HStack. The HStack sizes itself to its fixed-width children, so
-            // measuring it would feed its (possibly overflowing) content width
-            // back into `availableWidth` — a self-reinforcing loop that, once the
-            // right inspector opens and shrinks the container, leaves the panes
-            // too wide so they bleed over and clip the inspector. Measuring the
-            // clear container instead always reflects the true available width.
-            Color.clear
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(widthReader)
-                .overlay(alignment: .leading) {
-                    HStack(spacing: 0) {
-                        paneContainer(.primary)
-                            .frame(width: primaryWidth)
+            SplitPaneLayout(fraction: fraction, dividerWidth: dividerWidth) {
+                paneContainer(.primary)
 
-                        PaneDivider(
-                            usableWidth: usable,
-                            committedFraction: $secondaryPaneFraction,
-                            liveFraction: $liveFraction
-                        )
+                PaneDivider(
+                    usableWidth: max(1, availableWidth - dividerWidth),
+                    committedFraction: $secondaryPaneFraction,
+                    liveFraction: $liveFraction
+                )
 
-                        paneContainer(.secondary)
-                            .frame(width: secondaryWidth)
-                    }
-                }
-                .clipped()
+                paneContainer(.secondary)
+            }
+            // Width is still measured, but only to convert divider drag deltas
+            // into a fraction; it never drives the layout itself.
+            .background(widthReader)
+            .clipped()
         } else {
             paneContainer(.primary)
         }
     }
 
-    // Measures the real container width and feeds it back via a preference so
-    // the split ratio always tracks the current available space.
+    // Measures the container width for the divider's drag math.
     private var widthReader: some View {
         GeometryReader { proxy in
             Color.clear
@@ -172,6 +155,7 @@ private struct CenterPaneArea: View {
             showInspector: $showInspector,
             paneId: paneId
         )
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .overlay(
             Rectangle()
                 .inset(by: 0.5)
@@ -216,6 +200,55 @@ private struct CenterPaneArea: View {
             appState: appState,
             dropTargetPane: $dropTargetPane
         ))
+    }
+}
+
+// MARK: - Split Pane Layout
+
+/// Places [primary, divider, secondary] horizontally. The primary pane takes
+/// `fraction` of the usable width (clamped so both panes keep a minimum),
+/// the secondary pane gets whatever remains. Widths are derived from the
+/// bounds given to `placeSubviews`, so a change in available width (e.g. the
+/// inspector opening) is reflected in the very same layout pass.
+private struct SplitPaneLayout: Layout {
+    var fraction: Double
+    var dividerWidth: CGFloat
+    static let minPaneWidth: CGFloat = 160
+
+    static func primaryWidth(usable: CGFloat, fraction: Double) -> CGFloat {
+        let minW = min(minPaneWidth, usable / 2)
+        return max(minW, min(usable - minW, usable * fraction)).rounded()
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        proposal.replacingUnspecifiedDimensions()
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        guard subviews.count == 3 else { return }
+        let usable = max(0, bounds.width - dividerWidth)
+        let primaryWidth = Self.primaryWidth(usable: usable, fraction: fraction)
+        let secondaryWidth = max(0, usable - primaryWidth)
+        let height = bounds.height
+        var x = bounds.minX
+
+        subviews[0].place(
+            at: CGPoint(x: x, y: bounds.minY),
+            anchor: .topLeading,
+            proposal: ProposedViewSize(width: primaryWidth, height: height)
+        )
+        x += primaryWidth
+        subviews[1].place(
+            at: CGPoint(x: x, y: bounds.minY),
+            anchor: .topLeading,
+            proposal: ProposedViewSize(width: dividerWidth, height: height)
+        )
+        x += dividerWidth
+        subviews[2].place(
+            at: CGPoint(x: x, y: bounds.minY),
+            anchor: .topLeading,
+            proposal: ProposedViewSize(width: secondaryWidth, height: height)
+        )
     }
 }
 

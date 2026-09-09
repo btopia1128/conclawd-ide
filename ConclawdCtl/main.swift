@@ -8,10 +8,14 @@ import Foundation
 
 let usage = """
 usage: conclawd split --title <title> (--prompt <text> | --prompt-file <path>) [--cwd <dir>]
+       conclawd open <path>
 
-Creates a new session tab in the running Conclawd app. The prompt is submitted
-to the new session automatically once it finishes starting. --cwd defaults to
-the current directory.
+split: Creates a new session tab in the running Conclawd app. The prompt is
+submitted to the new session automatically once it finishes starting. --cwd
+defaults to the current directory.
+
+open: Opens the file at <path> in the Conclawd editor pane. Relative paths are
+resolved against the current directory.
 """
 
 func fail(_ message: String) -> Never {
@@ -26,53 +30,66 @@ guard let command = arguments.first, command != "-h", command != "--help" else {
 }
 arguments.removeFirst()
 
-guard command == "split" else {
-    fail("unknown command '\(command)'\n\(usage)")
-}
-
 var title: String?
 var prompt: String?
 var cwd: String?
+var openPath: String?
 
-var index = 0
-while index < arguments.count {
-    let flag = arguments[index]
-    func value() -> String {
-        index += 1
-        guard index < arguments.count else { fail("missing value for \(flag)") }
-        return arguments[index]
-    }
-    switch flag {
-    case "--title":
-        title = value()
-    case "--prompt":
-        prompt = value()
-    case "--prompt-file":
-        let path = value()
-        guard let contents = try? String(contentsOfFile: path, encoding: .utf8) else {
-            fail("cannot read prompt file: \(path)")
+switch command {
+case "split":
+    var index = 0
+    while index < arguments.count {
+        let flag = arguments[index]
+        func value() -> String {
+            index += 1
+            guard index < arguments.count else { fail("missing value for \(flag)") }
+            return arguments[index]
         }
-        prompt = contents
-    case "--cwd":
-        cwd = value()
-    case "-h", "--help":
+        switch flag {
+        case "--title":
+            title = value()
+        case "--prompt":
+            prompt = value()
+        case "--prompt-file":
+            let path = value()
+            guard let contents = try? String(contentsOfFile: path, encoding: .utf8) else {
+                fail("cannot read prompt file: \(path)")
+            }
+            prompt = contents
+        case "--cwd":
+            cwd = value()
+        case "-h", "--help":
+            print(usage)
+            exit(0)
+        default:
+            fail("unknown option '\(flag)'\n\(usage)")
+        }
+        index += 1
+    }
+    guard let promptValue = prompt,
+          !promptValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        fail("a non-empty prompt is required (--prompt or --prompt-file)")
+    }
+case "open":
+    guard arguments.count == 1, let rawPath = arguments.first, !rawPath.isEmpty else {
+        fail("open takes exactly one file path\n\(usage)")
+    }
+    if rawPath == "-h" || rawPath == "--help" {
         print(usage)
         exit(0)
-    default:
-        fail("unknown option '\(flag)'\n\(usage)")
     }
-    index += 1
-}
-
-guard let prompt, !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-    fail("a non-empty prompt is required (--prompt or --prompt-file)")
+    // Resolve relative paths here — the app has a different working directory.
+    openPath = URL(fileURLWithPath: rawPath).standardizedFileURL.path
+default:
+    fail("unknown command '\(command)'\n\(usage)")
 }
 
 let request = SessionControlRequest(
-    command: "split",
+    command: command,
     title: title,
     prompt: prompt,
-    cwd: cwd ?? FileManager.default.currentDirectoryPath
+    cwd: command == "split" ? (cwd ?? FileManager.default.currentDirectoryPath) : nil,
+    path: openPath
 )
 
 let socketPath = ProcessInfo.processInfo.environment["CONCLAWD_SOCKET"]
@@ -136,9 +153,14 @@ guard let response = try? JSONDecoder().decode(SessionControlResponse.self, from
 }
 
 if response.ok {
-    let label = title.map { " \"\($0)\"" } ?? ""
-    print("Created new session tab\(label). "
-        + "The handoff prompt will be submitted automatically once the session is ready.")
+    switch command {
+    case "open":
+        print("Opened \(openPath ?? "the file") in the Conclawd editor.")
+    default:
+        let label = title.map { " \"\($0)\"" } ?? ""
+        print("Created new session tab\(label). "
+            + "The handoff prompt will be submitted automatically once the session is ready.")
+    }
 } else {
     fail(response.error ?? "unknown error")
 }

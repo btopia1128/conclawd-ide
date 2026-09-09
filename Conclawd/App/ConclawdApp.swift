@@ -135,18 +135,19 @@ struct ConclawdApp: App {
             .disabled(!appState.agentHasChanges && !appState.skillHasChanges && !appState.agentEditorHasChanges)
         }
 
+        // Never gated on a project selection: the file tree always has a root
+        // (the selected project, or the home directory in All Projects / Home
+        // mode), and creation follows that same root.
         CommandGroup(replacing: .newItem) {
             Button("New File") {
                 appState.promptCreateFile()
             }
             .keyboardShortcut("n", modifiers: .command)
-            .disabled(appState.selectedProject == nil)
 
             Button("New Folder") {
                 appState.promptCreateDirectory()
             }
             .keyboardShortcut("n", modifiers: [.command, .shift])
-            .disabled(appState.selectedProject == nil)
         }
 
         CommandGroup(after: .sidebar) {

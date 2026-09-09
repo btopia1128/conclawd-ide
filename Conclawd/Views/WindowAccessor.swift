@@ -22,29 +22,28 @@ struct WindowAccessor: NSViewRepresentable {
 /// first-responder status. SwiftUI menu key equivalents don't reliably fire in
 /// that case, so the menu commands alone leave the shortcuts dead while the
 /// terminal is focused — which is the app's most common state.
+///
+/// The shortcuts are always live: the file tree always has a root (the selected
+/// project, or the home directory in All Projects / Home mode), so there is no
+/// state in which creating a file has no target.
 struct FileCreationShortcutMonitor: NSViewRepresentable {
-    /// Whether a project (or valid target) exists; mirrors the menu's enabled state.
-    var canCreate: Bool
     var onNewFile: () -> Void
     var onNewFolder: () -> Void
 
     func makeNSView(context: Context) -> ShortcutMonitorView {
         let view = ShortcutMonitorView()
-        view.canCreate = canCreate
         view.onNewFile = onNewFile
         view.onNewFolder = onNewFolder
         return view
     }
 
     func updateNSView(_ nsView: ShortcutMonitorView, context: Context) {
-        nsView.canCreate = canCreate
         nsView.onNewFile = onNewFile
         nsView.onNewFolder = onNewFolder
     }
 }
 
 final class ShortcutMonitorView: NSView {
-    var canCreate = false
     var onNewFile: (() -> Void)?
     var onNewFolder: (() -> Void)?
 
@@ -72,8 +71,6 @@ final class ShortcutMonitorView: NSView {
                   event.charactersIgnoringModifiers?.lowercased() == "n" else {
                 return event
             }
-            guard self.canCreate else { return event }
-
             if flags.contains(.shift) {
                 self.onNewFolder?()
             } else {

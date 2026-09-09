@@ -200,17 +200,35 @@ final class ClaudeSettingsService: Sendable {
         }
     }
 
+    /// Returns the stored skill usage hook command, if installed.
+    func skillUsageHookCommand() -> String? {
+        let hooks = getHooks()
+        guard let eventHooks = hooks["PostToolUse"] as? [[String: Any]] else { return nil }
+        for hookGroup in eventHooks {
+            guard let innerHooks = hookGroup["hooks"] as? [[String: Any]] else { continue }
+            for hook in innerHooks {
+                if let command = hook["command"] as? String,
+                   command.contains(Self.skillUsageMarker) {
+                    return command
+                }
+            }
+        }
+        return nil
+    }
+
     /// Installs or removes the skill usage tracking hook.
     func setSkillUsageHook(enabled: Bool, scriptPath: String) {
         var hooks = getHooks()
 
         if enabled {
+            // The hook command runs through a shell; the script lives under
+            // "Application Support" so the path must be quoted.
             let hook: [String: Any] = [
                 "matcher": "Skill",
                 "hooks": [
                     [
                         "type": "command",
-                        "command": scriptPath
+                        "command": "\"\(scriptPath)\""
                     ]
                 ]
             ]

@@ -606,6 +606,8 @@ final class AppState {
         setupScheduleManager()
         setupSessionControlServer()
         SessionSplitSkillInstaller.installIfNeeded()
+        OpenFileSkillInstaller.installIfNeeded()
+        skillUsageService.repairHookIfNeeded()
         refreshGitStatus()
         setupGitHeadWatcher()
 
@@ -3955,13 +3957,44 @@ final class AppState {
         sessionControlServer.start()
     }
 
+    /// Dispatches a request from the bundled `conclawd` helper CLI.
+    private func handleSessionControlRequest(_ request: SessionControlRequest) -> SessionControlResponse {
+        switch request.command {
+        case "split":
+            return handleSessionSplitRequest(request)
+        case "open":
+            return handleOpenFileRequest(request)
+        default:
+            return SessionControlResponse(ok: false, sessionId: nil, error: "unknown command '\(request.command)'")
+        }
+    }
+
+    /// Handles a `conclawd open` request: opens the file in the editor pane.
+    private func handleOpenFileRequest(_ request: SessionControlRequest) -> SessionControlResponse {
+        guard let path = request.path, !path.isEmpty else {
+            return SessionControlResponse(ok: false, sessionId: nil, error: "a file path is required")
+        }
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) else {
+            return SessionControlResponse(ok: false, sessionId: nil, error: "file not found: \(path)")
+        }
+        guard !isDirectory.boolValue else {
+            return SessionControlResponse(ok: false, sessionId: nil, error: "path is a directory, not a file: \(path)")
+        }
+        let url = URL(fileURLWithPath: path)
+        openFile(url: url)
+        // openFile silently declines files it cannot display (e.g. binary data
+        // that is neither UTF-8 text nor a previewable image/video).
+        guard openFiles.contains(where: { $0.url == url }) else {
+            return SessionControlResponse(ok: false, sessionId: nil, error: "cannot display this file (not UTF-8 text or previewable media): \(path)")
+        }
+        return SessionControlResponse(ok: true, sessionId: nil, error: nil)
+    }
+
     /// Handles a `conclawd split` request: opens a new session tab (without
     /// stealing focus from the requesting session) and queues the handoff
     /// prompt for delivery on the session's first idle.
-    private func handleSessionControlRequest(_ request: SessionControlRequest) -> SessionControlResponse {
-        guard request.command == "split" else {
-            return SessionControlResponse(ok: false, sessionId: nil, error: "unknown command '\(request.command)'")
-        }
+    private func handleSessionSplitRequest(_ request: SessionControlRequest) -> SessionControlResponse {
         guard let prompt = request.prompt,
               !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return SessionControlResponse(ok: false, sessionId: nil, error: "prompt is required")

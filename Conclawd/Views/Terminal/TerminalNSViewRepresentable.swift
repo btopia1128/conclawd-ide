@@ -9,9 +9,42 @@ class TerminalHostView: NSView {
     /// This ensures we hide the correct view even if the dict entry was replaced (e.g. during resume).
     private weak var currentTerminalView: IMETerminalView?
     private weak var processManager: AgentProcessManager?
+    /// Invoked when the user clicks inside this host (i.e. the terminal).
+    /// AppKit hands the click straight to SwiftTerm's NSView, so SwiftUI
+    /// gestures on the enclosing pane never see it; a local event monitor
+    /// scoped to this view's bounds is how the split pane learns it was
+    /// clicked. (SwiftTerm's `mouseDown` is not `open`, so it can't be
+    /// intercepted by subclassing.)
+    var onMouseDown: (() -> Void)?
+    private var mouseDownMonitor: Any?
 
     func configure(processManager: AgentProcessManager) {
         self.processManager = processManager
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        removeMouseDownMonitor()
+        guard window != nil else { return }
+        mouseDownMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+            guard let self, let window = self.window, event.window === window else { return event }
+            let point = self.convert(event.locationInWindow, from: nil)
+            if self.bounds.contains(point), !self.isHiddenOrHasHiddenAncestor {
+                self.onMouseDown?()
+            }
+            return event
+        }
+    }
+
+    private func removeMouseDownMonitor() {
+        if let monitor = mouseDownMonitor {
+            NSEvent.removeMonitor(monitor)
+            mouseDownMonitor = nil
+        }
+    }
+
+    deinit {
+        removeMouseDownMonitor()
     }
 
     /// Update the layer background to match the current terminal theme (e.g. on appearance change).
@@ -109,6 +142,8 @@ class TerminalHostView: NSView {
 struct TerminalHostRepresentable: NSViewRepresentable {
     let selectedSessionId: UUID?
     let processManager: AgentProcessManager
+    /// Called on mouse-down inside the terminal (used to activate the pane).
+    var onMouseDown: (() -> Void)? = nil
     @Environment(\.colorScheme) private var colorScheme
 
     func makeNSView(context: Context) -> TerminalHostView {
@@ -116,6 +151,7 @@ struct TerminalHostRepresentable: NSViewRepresentable {
         host.wantsLayer = true
         host.layer?.backgroundColor = TerminalTheme.current.background.cgColor
         host.configure(processManager: processManager)
+        host.onMouseDown = onMouseDown
         host.showTerminal(for: selectedSessionId)
         return host
     }
@@ -129,6 +165,7 @@ struct TerminalHostRepresentable: NSViewRepresentable {
             host.layer?.backgroundColor = bg
         }
         host.configure(processManager: processManager)
+        host.onMouseDown = onMouseDown
         host.showTerminal(for: selectedSessionId)
     }
 }

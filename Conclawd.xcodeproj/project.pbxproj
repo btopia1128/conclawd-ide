@@ -10,6 +10,7 @@
 		0088A939D01DE212FC1DD116 /* Skill.swift in Sources */ = {isa = PBXBuildFile; fileRef = F9A5CA95DA1C49B61190377C /* Skill.swift */; };
 		01C532B18AD991F1E3601D6F /* OpenFile.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78C5B998540B5F4DA8CFFC58 /* OpenFile.swift */; };
 		02C5ADD026994062CB4261A8 /* MarkdownPreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 74873D962B6B8F28E08BE20B /* MarkdownPreviewView.swift */; };
+		0451BD49704920FCFBC3AFD5 /* SkillUsageStatsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 142D9143F16F959EC2382370 /* SkillUsageStatsView.swift */; };
 		047B5AB01D770BC0A29C5345 /* TopBarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 75092191DFF0DDFE076C1B74 /* TopBarView.swift */; };
 		06CC499091543AC6560BCE8B /* CloudTriggerEditorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E21D02A6A0D89BE5CAF7133 /* CloudTriggerEditorView.swift */; };
 		0761537E39ED9ADCA4E720BE /* ScheduleRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 52052A93E35E0F14AACB0162 /* ScheduleRowView.swift */; };
@@ -99,6 +100,7 @@
 		A6833A630BC9A705ED5C1525 /* Trie.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9AB6AFB1662B6EBA55199EE /* Trie.swift */; };
 		A81946D3B9FDA877F686028A /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE65908AD28898CC7D0CD915 /* SettingsView.swift */; };
 		A9C0A496AA9C7A6B535EB90B /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 685F3C5587EA5EC96E155559 /* ContentView.swift */; };
+		AB5B880AE2BA0BF5AB84FBAD /* OpenFileSkillInstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69871B97A6CA1117D45A49FB /* OpenFileSkillInstaller.swift */; };
 		AE2368EC6258124846DD18EA /* ScheduleManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C88262052840E1C9F91F572 /* ScheduleManager.swift */; };
 		AE8511B0155A414373C95D2C /* AgentNodeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4902D02A40284F431D34CE93 /* AgentNodeView.swift */; };
 		B2F9C761C02463CDEA99BE1E /* ConclawdApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D32D2B13028A826502CECB3 /* ConclawdApp.swift */; };
@@ -194,6 +196,7 @@
 		1240B0075918EF657527EBC8 /* SessionPresetSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionPresetSheet.swift; sourceTree = "<group>"; };
 		12D9DF06492C4935FE1D9C72 /* SessionHistoryView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionHistoryView.swift; sourceTree = "<group>"; };
 		130F64A5EDBFB9F596B4F0BC /* ShellPresetSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShellPresetSheet.swift; sourceTree = "<group>"; };
+		142D9143F16F959EC2382370 /* SkillUsageStatsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkillUsageStatsView.swift; sourceTree = "<group>"; };
 		158D31CE46B05791FA2349E4 /* MediaPreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MediaPreviewView.swift; sourceTree = "<group>"; };
 		1709AF5E5EB55212903507A1 /* NewSessionSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewSessionSheet.swift; sourceTree = "<group>"; };
 		1BA8ED0158D916BD86356741 /* ChatBubbleView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatBubbleView.swift; sourceTree = "<group>"; };
@@ -234,6 +237,7 @@
 		685F3C5587EA5EC96E155559 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		68A8653403D7AC7443A0F4A5 /* ScheduleEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleEditorView.swift; sourceTree = "<group>"; };
 		68BDBE8FF43BDE9EB3F2A54E /* WindowAccessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowAccessor.swift; sourceTree = "<group>"; };
+		69871B97A6CA1117D45A49FB /* OpenFileSkillInstaller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenFileSkillInstaller.swift; sourceTree = "<group>"; };
 		69BEE86E5493C1B3D86F5A6D /* PaneState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaneState.swift; sourceTree = "<group>"; };
 		6B3C487DCA5553C68F25CEA6 /* AgentConfigService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentConfigService.swift; sourceTree = "<group>"; };
 		6CAEBE973A0DB13DCD5BB9D9 /* ConclawdCtl */ = {isa = PBXFileReference; includeInIndex = 0; path = ConclawdCtl; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -413,6 +417,7 @@
 				AE65908AD28898CC7D0CD915 /* SettingsView.swift */,
 				F370320DEE9790A58A1E3D0C /* SkillEditorView.swift */,
 				31E25EF4CC3FB1EEEF7E3781 /* SkillInspectorView.swift */,
+				142D9143F16F959EC2382370 /* SkillUsageStatsView.swift */,
 				FE80EFDF06C678E48A435083 /* SyntaxHighlightTextView.swift */,
 			);
 			path = Settings;
@@ -447,6 +452,7 @@
 				5471D2C251CED26FDBA73E9E /* MemoryDatabaseManager.swift */,
 				F8B99F2CD048A99F73DF2583 /* MemoryExtractionLog.swift */,
 				FF89A6101806BEFA116B3745 /* MemoryExtractor.swift */,
+				69871B97A6CA1117D45A49FB /* OpenFileSkillInstaller.swift */,
 				4B99EC092C1369020A906182 /* OpenFileWatcherService.swift */,
 				4C88262052840E1C9F91F572 /* ScheduleManager.swift */,
 				BD8E7BAB01E98C01D87673EE /* SessionControlProtocol.swift */,
@@ -963,6 +969,7 @@
 				7632CE5C09DD13CFB0D81551 /* NewSkillSheet.swift in Sources */,
 				332F6A58839F1FB2A80B127B /* Normalizer.swift in Sources */,
 				01C532B18AD991F1E3601D6F /* OpenFile.swift in Sources */,
+				AB5B880AE2BA0BF5AB84FBAD /* OpenFileSkillInstaller.swift in Sources */,
 				8B2A91E96B2FA3E250636522 /* OpenFileWatcherService.swift in Sources */,
 				5FA4F56C0B32E0D3109A9BF6 /* OrgChartCanvasView.swift in Sources */,
 				66AAD84622EADAA48BB1F6C7 /* OrgChartView.swift in Sources */,
@@ -998,6 +1005,7 @@
 				93056E654EB61F7127399B6D /* SkillEditorView.swift in Sources */,
 				C0BE4903782BD8C977CAD44D /* SkillInspectorView.swift in Sources */,
 				92AD52C0B843E93E14A07FCA /* SkillUsageService.swift in Sources */,
+				0451BD49704920FCFBC3AFD5 /* SkillUsageStatsView.swift in Sources */,
 				7B54AA7244A27003D8AB8328 /* String+PreTokenization.swift in Sources */,
 				6800A74275D2E91559306035 /* SyntaxHighlightTextView.swift in Sources */,
 				A376B076B9DEFDD47C9251F3 /* TerminalNSViewRepresentable.swift in Sources */,

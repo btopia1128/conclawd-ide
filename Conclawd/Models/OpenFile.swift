@@ -6,6 +6,7 @@ enum FileKind: Equatable {
     case text
     case image
     case video
+    case audio
 
     /// Extensions that UTType misidentifies as media (e.g. `.ts` → MPEG-2 Transport Stream).
     private static let codeExtensions: Set<String> = [
@@ -27,6 +28,9 @@ enum FileKind: Equatable {
             if utType.conforms(to: .movie) || utType.conforms(to: .video) {
                 return .video
             }
+            if utType.conforms(to: .audio) {
+                return .audio
+            }
         }
         // Fallback for common extensions UTType may not cover
         switch lower {
@@ -34,6 +38,8 @@ enum FileKind: Equatable {
             return .image
         case "mp4", "mov", "m4v", "webm", "avi", "mkv":
             return .video
+        case "wav", "mp3", "m4a", "aac", "flac", "ogg", "oga", "opus", "aiff", "aif", "caf":
+            return .audio
         default:
             return .text
         }

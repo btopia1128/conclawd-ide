@@ -303,6 +303,14 @@ struct L10n {
     var skillName: String { s("Skill name", "スキル名") }
     var usageCount: String { s("Usage", "利用回数") }
     var timesUsed: String { s("times", "回") }
+    var skillUsageStats: String { s("Skill Usage", "スキル利用状況") }
+    var last7Days: String { s("7 days", "過去7日") }
+    var last30Days: String { s("30 days", "過去30日") }
+    var allTime: String { s("All time", "全期間") }
+    var usageBySkill: String { s("By Skill", "スキル別合計") }
+    var dailyActivity: String { s("Daily Activity", "日別推移") }
+    var noUsageData: String { s("No usage recorded in this period.", "この期間の利用記録はありません") }
+    var usageTrackingDisabledHint: String { s("Enable Skill Usage Tracking in Settings to start recording.", "設定の「スキル利用回数の記録」を有効にすると記録が始まります") }
     var behavior: String { s("Behavior", "動作") }
     var manualOnly: String { s("Manual Only", "手動のみ") }
     var manualOnlyDescription: String { s("Prevent automatic invocation by Claude", "Claudeの自動呼び出しを無効化") }

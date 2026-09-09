@@ -20,6 +20,7 @@ struct SessionControlRequest: Codable, Sendable {
     var title: String?
     var prompt: String?
     var cwd: String?
+    var path: String?
 }
 
 struct SessionControlResponse: Codable, Sendable {

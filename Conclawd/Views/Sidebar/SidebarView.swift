@@ -14,6 +14,7 @@ struct SidebarView: View {
     @Binding var showSidebar: Bool
     @State private var showingNewAgent = false
     @State private var showingNewSkill = false
+    @State private var showingSkillUsageStats = false
     /// Non-nil while the AI-assisted creation sheet is up, carrying its target.
     @State private var aiCreationKind: AICreationKind?
     @State private var showingNewSchedule = false
@@ -69,6 +70,7 @@ struct SidebarView: View {
             showingFullHistory: $showingFullHistory,
             showingNewAgent: $showingNewAgent,
             showingNewSkill: $showingNewSkill,
+            showingSkillUsageStats: $showingSkillUsageStats,
             aiCreationKind: $aiCreationKind,
             showingNewSchedule: $showingNewSchedule,
             scheduleToEdit: $scheduleToEdit,
@@ -1365,6 +1367,7 @@ struct SidebarView: View {
                 Spacer()
 
                 if showAddMenu {
+                    skillUsageStatsButton
                     reloadButton { appState.reloadSkills() }
                     newSkillMenu
                         .pointingHandCursor()
@@ -1390,6 +1393,20 @@ struct SidebarView: View {
                 }
             }
         }
+    }
+
+    private var skillUsageStatsButton: some View {
+        Button {
+            showingSkillUsageStats = true
+        } label: {
+            Image(systemName: "chart.bar.xaxis")
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 20, height: 20)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .pointingHandCursor()
     }
 
     private func skillRow(_ skill: Skill) -> some View {
@@ -2340,6 +2357,7 @@ private struct SidebarSheetsModifier: ViewModifier {
     @Binding var showingFullHistory: Bool
     @Binding var showingNewAgent: Bool
     @Binding var showingNewSkill: Bool
+    @Binding var showingSkillUsageStats: Bool
     @Binding var aiCreationKind: AICreationKind?
     @Binding var showingNewSchedule: Bool
     @Binding var scheduleToEdit: AgentSchedule?
@@ -2359,6 +2377,9 @@ private struct SidebarSheetsModifier: ViewModifier {
             }
             .sheet(isPresented: $showingNewSkill) {
                 NewSkillSheet()
+            }
+            .sheet(isPresented: $showingSkillUsageStats) {
+                SkillUsageStatsView()
             }
             .sheet(item: $aiCreationKind) { kind in
                 AICreationSheet(kind: kind)
