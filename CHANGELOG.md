@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-09-10
+
+### Added
+
+- `conclawd open <path>` helper command that opens a file in the editor pane, plus a
+  bundled `conclawd-open-file` skill (auto-installed to `~/.claude/skills`) so
+  in-session Claude can use it
+- Skill usage statistics sheet (per-skill totals and daily activity, 7 days / 30 days /
+  all time), reachable from the sidebar
+- Inline audio preview (wav, mp3, m4a, aac, flac, ogg, aiff, ...) in the file editor
+
+### Changed
+
+- New File / New Folder are always available; creation follows the file tree root
+  (selected project or home directory)
+- Clicking inside a terminal or its tab bar now activates that split pane, so
+  pane-scoped actions target the pane you clicked
+
+### Fixed
+
+- Opening multi-megabyte files no longer hangs the editor or balloons memory (lazy
+  layout, plain text storage for oversized documents, no per-update string comparison)
+- Split view panes bled under the right inspector or left a gap when it opened/closed;
+  widths are now resolved in the same layout pass
+- Skill usage hook never recorded anything because the script path under
+  "Application Support" was unquoted; existing installs are repaired automatically
+
 ## [0.1.1] - 2026-08-14
 
 ### Fixed
