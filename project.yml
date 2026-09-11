@@ -4,9 +4,10 @@ options:
   deploymentTarget:
     macOS: "14.0"
   generateEmptyDirectories: true
-  # XcodeGen has no option for the scheme's Queue Debugging setting; patch it in
-  # after generation. Leaving it on deadlocks forkpty (see the script's comment).
-  postGenCommand: bash Scripts/disable-queue-debugging.sh
+  # XcodeGen has no option for these scheme debug settings; patch them in after
+  # generation. Queue Debugging deadlocks forkpty, and GPU Frame Capture deadlocks
+  # SwiftUI's render commit (see each script's comment).
+  postGenCommand: bash Scripts/disable-queue-debugging.sh && bash Scripts/disable-gpu-frame-capture.sh
 
 # Sign with a stable identity so TCC grants (Desktop/Documents access, etc.)
 # survive rebuilds. Ad-hoc/unsigned builds get a new CDHash every build, which
