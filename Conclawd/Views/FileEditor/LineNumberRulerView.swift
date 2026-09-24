@@ -66,14 +66,26 @@ class LineNumberTextView: NSTextView {
 
         // Draw line numbers
         let string = self.string as NSString
-        guard string.length > 0, layoutManager.numberOfGlyphs > 0 else { return }
-
         let originY = textContainerOrigin.y
         let numGlyphs = layoutManager.numberOfGlyphs
         let attrs: [NSAttributedString.Key: Any] = [
             .font: lineNumberFont,
             .foregroundColor: lineNumberColor,
         ]
+
+        func drawNumber(_ lineNumber: Int, in lineRect: NSRect) {
+            let y = lineRect.origin.y + originY
+            guard y + lineRect.height >= rect.minY else { return }
+            let numStr = "\(lineNumber)" as NSString
+            let numSize = numStr.size(withAttributes: attrs)
+            numStr.draw(
+                at: NSPoint(
+                    x: insetWidth - numSize.width - 12,
+                    y: y + (lineRect.height - numSize.height) / 2
+                ),
+                withAttributes: attrs
+            )
+        }
 
         var lineNumber = 1
         var charIndex = 0
@@ -88,27 +100,22 @@ class LineNumberTextView: NSTextView {
                 let lineRect = layoutManager.lineFragmentRect(
                     forGlyphAt: glyphRange.location, effectiveRange: nil
                 )
-                let y = lineRect.origin.y + originY
-
-                if y > rect.maxY { break }
-
-                if y + lineRect.height >= rect.minY {
-                    let numStr = "\(lineNumber)" as NSString
-                    let numSize = numStr.size(withAttributes: attrs)
-                    numStr.draw(
-                        at: NSPoint(
-                            x: insetWidth - numSize.width - 12,
-                            y: y + (lineRect.height - numSize.height) / 2
-                        ),
-                        withAttributes: attrs
-                    )
-                }
+                if lineRect.origin.y + originY > rect.maxY { return }
+                drawNumber(lineNumber, in: lineRect)
             }
 
             lineNumber += 1
             let next = NSMaxRange(lineRange)
             if next <= charIndex { break }
             charIndex = next
+        }
+
+        // The trailing line after a final newline (or the only line of an empty
+        // document) has no glyphs, so the loop above never reaches it. The
+        // layout manager exposes its rect as the "extra line fragment", which
+        // exists exactly when the text is empty or ends with a line break.
+        if layoutManager.extraLineFragmentTextContainer != nil {
+            drawNumber(lineNumber, in: layoutManager.extraLineFragmentRect)
         }
     }
 
