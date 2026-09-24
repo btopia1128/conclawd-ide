@@ -10,16 +10,10 @@ struct SkillEditorView: View {
         if appState.viewingBundledFileURL != nil {
             bundledFileViewer
         } else if appState.editingSkill != nil {
+            // ⌘S is owned by File > Save (AppState.saveFromMenu).
             VStack(spacing: 0) {
                 editor
                 bottomBar
-            }
-            .overlay {
-                // Hidden buttons for keyboard shortcuts
-                Button("") { appState.saveEditingSkill() }
-                    .keyboardShortcut("s", modifiers: .command)
-                    .frame(width: 0, height: 0)
-                    .opacity(0)
             }
         } else {
             emptyState
@@ -147,13 +141,12 @@ private struct BundledFileContentView: View {
 
             fileBottomBar
         }
-        .overlay {
-            if !loadError {
-                Button("") { saveFile() }
-                    .keyboardShortcut("s", modifiers: .command)
-                    .frame(width: 0, height: 0)
-                    .opacity(0)
-            }
+        // ⌘S arrives from File > Save (AppState.saveFromMenu), addressed by URL.
+        // Only a copy holding edits writes: one kept alive behind another tab has
+        // the file's original text and must not write it back over the real edits.
+        .onReceive(NotificationCenter.default.publisher(for: .saveBundledSkillFile)) { note in
+            guard !loadError, hasChanges, (note.object as? URL) == fileURL else { return }
+            saveFile()
         }
         .onAppear { loadContent() }
         .onChange(of: fileURL) { loadContent() }
@@ -284,4 +277,10 @@ private struct BundledFileContentView: View {
     private func revertFile() {
         content = originalContent
     }
+}
+
+extension Notification.Name {
+    /// Posted by File > Save when the active pane shows a bundled skill file;
+    /// `object` is that file's URL.
+    static let saveBundledSkillFile = Notification.Name("saveBundledSkillFile")
 }

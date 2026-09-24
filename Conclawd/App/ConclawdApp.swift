@@ -100,23 +100,10 @@ struct ConclawdApp: App {
         // Save / Revert for inspector
         CommandGroup(replacing: .saveItem) {
             Button("Save") {
-                // The file editor owns ⌘S whenever it's the active pane's content.
-                if appState.saveActiveEditorFile() { return }
-                switch appState.inspectorTarget {
-                case .agent:
-                    appState.saveEditingAgent()
-                case .skill:
-                    appState.saveEditingSkill()
-                case .none:
-                    break
-                }
-                if appState.centerPane == .agentEditor {
-                    appState.saveAgentEditor()
-                }
+                appState.saveFromMenu()
             }
             .keyboardShortcut("s", modifiers: .command)
-            .disabled(!appState.agentHasChanges && !appState.skillHasChanges
-                      && !appState.agentEditorHasChanges && !appState.canSaveEditorFile)
+            .disabled(!appState.canSaveFromMenu)
 
             Button("Revert") {
                 switch appState.inspectorTarget {

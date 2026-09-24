@@ -605,8 +605,7 @@ final class AppState {
         setupOpenFileWatcher()
         setupScheduleManager()
         setupSessionControlServer()
-        SessionSplitSkillInstaller.installIfNeeded()
-        OpenFileSkillInstaller.installIfNeeded()
+        SessionControlPrompt.removeLegacySkills()
         skillUsageService.repairHookIfNeeded()
         refreshGitStatus()
         setupGitHeadWatcher()
@@ -1681,10 +1680,50 @@ final class AppState {
         return openFiles.first { $0.id == id }
     }
 
-    /// Whether ⌘S should be routed to the file editor (drives the Save menu item's
-    /// enabled state — a disabled item with a key equivalent swallows the
-    /// shortcut and beeps instead of letting it through).
+    /// Whether ⌘S should be routed to the file editor.
     var canSaveEditorFile: Bool { activeEditorFile != nil }
+
+    /// The bundled skill file the active pane is showing, if any.
+    var activeBundledFileURL: URL? {
+        guard activePane.centerPane == .skillEditor else { return nil }
+        return activePane.viewingBundledFileURL
+    }
+
+    /// Drives the Save menu item's enabled state — a disabled item with a key
+    /// equivalent swallows the shortcut and beeps instead of letting it through.
+    var canSaveFromMenu: Bool {
+        agentHasChanges || skillHasChanges || agentEditorHasChanges
+            || canSaveEditorFile || activeBundledFileURL != nil
+    }
+
+    /// File > Save (⌘S). This menu command is the app's only ⌘S handler: editors
+    /// behind other tabs stay alive at opacity 0 and still receive SwiftUI keyboard
+    /// shortcuts, so a view-level ⌘S in any of them took the key before the menu
+    /// did and the editor actually on screen silently never saved.
+    func saveFromMenu() {
+        // The file editor owns ⌘S whenever it's the active pane's content.
+        if saveActiveEditorFile() { return }
+        if let url = activeBundledFileURL {
+            NotificationCenter.default.post(name: .saveBundledSkillFile, object: url)
+            return
+        }
+        switch inspectorTarget {
+        case .agent:
+            saveEditingAgent()
+        case .skill:
+            saveEditingSkill()
+        case .none:
+            break
+        }
+        switch centerPane {
+        case .agentEditor:
+            saveAgentEditor()
+        case .skillEditor where inspectorTarget != .skill:
+            saveEditingSkill()
+        default:
+            break
+        }
+    }
 
     /// Save the file the active pane is editing. Returns whether the file editor
     /// owned this save request, so callers can fall through to other targets.
@@ -1697,12 +1736,17 @@ final class AppState {
         return true
     }
 
-    /// Save the file with the given ID to disk.
+    /// Save the file with the given ID to disk. A failed write keeps the edits
+    /// marked unsaved and shows the error, instead of looking saved when it isn't.
     func saveFile(fileId: UUID) {
         guard let index = openFiles.firstIndex(where: { $0.id == fileId }) else { return }
         let file = openFiles[index]
-        try? file.content.write(to: file.url, atomically: true, encoding: .utf8)
-        openFiles[index].hasChanges = false
+        do {
+            try file.content.write(to: file.url, atomically: true, encoding: .utf8)
+            openFiles[index].hasChanges = false
+        } catch {
+            errorMessage = "Failed to save \(file.fileName): \(error.localizedDescription)"
+        }
     }
 
     /// Copy externally dragged files/directories into the given destination directory.

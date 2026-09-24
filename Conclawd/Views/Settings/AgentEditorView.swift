@@ -7,15 +7,10 @@ struct AgentEditorView: View {
 
     var body: some View {
         if appState.editingAgentContent != nil {
+            // ⌘S is owned by File > Save (AppState.saveFromMenu).
             VStack(spacing: 0) {
                 editor
                 bottomBar
-            }
-            .overlay {
-                Button("") { appState.saveAgentEditor() }
-                    .keyboardShortcut("s", modifiers: .command)
-                    .frame(width: 0, height: 0)
-                    .opacity(0)
             }
         } else {
             emptyState
