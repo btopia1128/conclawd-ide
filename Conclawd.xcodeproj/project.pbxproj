@@ -34,6 +34,7 @@
 		259A49801B181FECCF4D5AC6 /* BPETokenizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4B77A2665C345CFB964FF9E0 /* BPETokenizer.swift */; };
 		2A3284B70F430ACBDC45C56D /* AgentMemory.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44B1CCADE8352DE1587CE815 /* AgentMemory.swift */; };
 		2B096277360E87ECB7C666E4 /* ChatMessage.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2B41ED8A725882B7DE79ABB /* ChatMessage.swift */; };
+		325D0373FAF85A20A53D7D35 /* SessionControlPrompt.swift in Sources */ = {isa = PBXBuildFile; fileRef = 912FED7B538B8436EB0D19A2 /* SessionControlPrompt.swift */; };
 		332F6A58839F1FB2A80B127B /* Normalizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0BA85440E2E83045DCD46179 /* Normalizer.swift */; };
 		34F49D788C42AAFDF632A78E /* ChatView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5D85BBBD84013C09BC245A7C /* ChatView.swift */; };
 		380DA108688E50B21F5BC10F /* L10n.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0DDB2E12C984D04FDAA501DF /* L10n.swift */; };
@@ -100,7 +101,6 @@
 		A6833A630BC9A705ED5C1525 /* Trie.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9AB6AFB1662B6EBA55199EE /* Trie.swift */; };
 		A81946D3B9FDA877F686028A /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AE65908AD28898CC7D0CD915 /* SettingsView.swift */; };
 		A9C0A496AA9C7A6B535EB90B /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 685F3C5587EA5EC96E155559 /* ContentView.swift */; };
-		AB5B880AE2BA0BF5AB84FBAD /* OpenFileSkillInstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = 69871B97A6CA1117D45A49FB /* OpenFileSkillInstaller.swift */; };
 		AE2368EC6258124846DD18EA /* ScheduleManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4C88262052840E1C9F91F572 /* ScheduleManager.swift */; };
 		AE8511B0155A414373C95D2C /* AgentNodeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4902D02A40284F431D34CE93 /* AgentNodeView.swift */; };
 		B2F9C761C02463CDEA99BE1E /* ConclawdApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9D32D2B13028A826502CECB3 /* ConclawdApp.swift */; };
@@ -131,7 +131,6 @@
 		D44E5509076535F32666EAF9 /* Highlightr in Frameworks */ = {isa = PBXBuildFile; productRef = 1DE30E64F918EB003C4DE9EB /* Highlightr */; };
 		D541ADF6E91A4CD1A5F84816 /* FileTreeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0C94066D9A43A0CE83131C12 /* FileTreeView.swift */; };
 		D5EB57ECBBCF1888C37E2963 /* AgentMemoryService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AEA3877F8E6D090F2DFDA2C3 /* AgentMemoryService.swift */; };
-		D749747BF76A61B270B48ACC /* SessionSplitSkillInstaller.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89C43D4C3DB074901ECCFCAC /* SessionSplitSkillInstaller.swift */; };
 		D763817048E92C03928A7ACC /* AppColors.swift in Sources */ = {isa = PBXBuildFile; fileRef = 109DCE33B3BE3391DF16C3FF /* AppColors.swift */; };
 		D7DBCA15686FCA0E536CE522 /* MemoryExtractionLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8B99F2CD048A99F73DF2583 /* MemoryExtractionLog.swift */; };
 		D832F9A2433F642B780A0DEA /* GitBranch.swift in Sources */ = {isa = PBXBuildFile; fileRef = EAF03E0C767F7BA2C2A1C994 /* GitBranch.swift */; };
@@ -237,7 +236,6 @@
 		685F3C5587EA5EC96E155559 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		68A8653403D7AC7443A0F4A5 /* ScheduleEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScheduleEditorView.swift; sourceTree = "<group>"; };
 		68BDBE8FF43BDE9EB3F2A54E /* WindowAccessor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowAccessor.swift; sourceTree = "<group>"; };
-		69871B97A6CA1117D45A49FB /* OpenFileSkillInstaller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenFileSkillInstaller.swift; sourceTree = "<group>"; };
 		69BEE86E5493C1B3D86F5A6D /* PaneState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaneState.swift; sourceTree = "<group>"; };
 		6B3C487DCA5553C68F25CEA6 /* AgentConfigService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentConfigService.swift; sourceTree = "<group>"; };
 		6CAEBE973A0DB13DCD5BB9D9 /* ConclawdCtl */ = {isa = PBXFileReference; includeInIndex = 0; path = ConclawdCtl; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -258,11 +256,11 @@
 		7FEBC06236DB99D3FEF44839 /* BinaryDistinct.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BinaryDistinct.swift; sourceTree = "<group>"; };
 		869CBB3967265D0853E243B0 /* github.min.css */ = {isa = PBXFileReference; lastKnownFileType = text.css; path = github.min.css; sourceTree = "<group>"; };
 		8869FD3E47680AC41FEF72CF /* NewScheduleSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewScheduleSheet.swift; sourceTree = "<group>"; };
-		89C43D4C3DB074901ECCFCAC /* SessionSplitSkillInstaller.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionSplitSkillInstaller.swift; sourceTree = "<group>"; };
 		8A0E4A44A71C7DE5B1747482 /* Conclawd.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Conclawd.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		8E21D02A6A0D89BE5CAF7133 /* CloudTriggerEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudTriggerEditorView.swift; sourceTree = "<group>"; };
 		8EF341A7358BBEE1B6182117 /* Config.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Config.swift; sourceTree = "<group>"; };
 		90BE5C4D95BFF3068609DAFF /* FileWatcherService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileWatcherService.swift; sourceTree = "<group>"; };
+		912FED7B538B8436EB0D19A2 /* SessionControlPrompt.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionControlPrompt.swift; sourceTree = "<group>"; };
 		964372A09D562AB6531393EA /* SessionRecord.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionRecord.swift; sourceTree = "<group>"; };
 		9BFE51E1E8825EDADFF8FD9F /* OrgChartCanvasView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OrgChartCanvasView.swift; sourceTree = "<group>"; };
 		9CD4958915868E41823D62FD /* SkillConfigService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkillConfigService.swift; sourceTree = "<group>"; };
@@ -452,15 +450,14 @@
 				5471D2C251CED26FDBA73E9E /* MemoryDatabaseManager.swift */,
 				F8B99F2CD048A99F73DF2583 /* MemoryExtractionLog.swift */,
 				FF89A6101806BEFA116B3745 /* MemoryExtractor.swift */,
-				69871B97A6CA1117D45A49FB /* OpenFileSkillInstaller.swift */,
 				4B99EC092C1369020A906182 /* OpenFileWatcherService.swift */,
 				4C88262052840E1C9F91F572 /* ScheduleManager.swift */,
+				912FED7B538B8436EB0D19A2 /* SessionControlPrompt.swift */,
 				BD8E7BAB01E98C01D87673EE /* SessionControlProtocol.swift */,
 				09BBC52526A701B0E0D56083 /* SessionControlServer.swift */,
 				DC45CEA75CD8D931F618F27D /* SessionDiagnosticsLog.swift */,
 				794FA3FA9E371C3C89C5AC39 /* SessionHistoryService.swift */,
 				3E1B14E1EC9DD26AE6E72EC5 /* SessionPresetService.swift */,
-				89C43D4C3DB074901ECCFCAC /* SessionSplitSkillInstaller.swift */,
 				7D19C06DEE53A801C63E3A8F /* ShellPresetService.swift */,
 				9CD4958915868E41823D62FD /* SkillConfigService.swift */,
 				ACA8969CC91B0932E3FD93F8 /* SkillUsageService.swift */,
@@ -969,7 +966,6 @@
 				7632CE5C09DD13CFB0D81551 /* NewSkillSheet.swift in Sources */,
 				332F6A58839F1FB2A80B127B /* Normalizer.swift in Sources */,
 				01C532B18AD991F1E3601D6F /* OpenFile.swift in Sources */,
-				AB5B880AE2BA0BF5AB84FBAD /* OpenFileSkillInstaller.swift in Sources */,
 				8B2A91E96B2FA3E250636522 /* OpenFileWatcherService.swift in Sources */,
 				5FA4F56C0B32E0D3109A9BF6 /* OrgChartCanvasView.swift in Sources */,
 				66AAD84622EADAA48BB1F6C7 /* OrgChartView.swift in Sources */,
@@ -984,6 +980,7 @@
 				7198A0038234C9E0427CB054 /* ScheduleEditorView.swift in Sources */,
 				AE2368EC6258124846DD18EA /* ScheduleManager.swift in Sources */,
 				0761537E39ED9ADCA4E720BE /* ScheduleRowView.swift in Sources */,
+				325D0373FAF85A20A53D7D35 /* SessionControlPrompt.swift in Sources */,
 				E1FCE05EEE8698053713413A /* SessionControlProtocol.swift in Sources */,
 				C3714D4D6BE1BAD29939946A /* SessionControlServer.swift in Sources */,
 				8E1E28B6A9CA5CDAF59CCF8D /* SessionDiagnosticsLog.swift in Sources */,
@@ -994,7 +991,6 @@
 				0D8B26579C4711D549855A27 /* SessionPresetService.swift in Sources */,
 				55D0AC7E7318F5D053718B74 /* SessionPresetSheet.swift in Sources */,
 				622B2493614F97C3FD433B1A /* SessionRecord.swift in Sources */,
-				D749747BF76A61B270B48ACC /* SessionSplitSkillInstaller.swift in Sources */,
 				A81946D3B9FDA877F686028A /* SettingsView.swift in Sources */,
 				56D04E6FF220221501EF2304 /* ShellPreset.swift in Sources */,
 				9D8AB53E5B88E64CC117F3E4 /* ShellPresetService.swift in Sources */,

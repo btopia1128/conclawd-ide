@@ -55,6 +55,8 @@
       </CommandLineArguments>
    </TestAction>
    <LaunchAction
+      enableGPUValidationMode = "1"
+      enableGPUFrameCaptureMode = "3"
       queueDebuggingEnabled = "No"
       buildConfiguration = "Debug"
       selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"

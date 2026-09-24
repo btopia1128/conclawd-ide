@@ -95,6 +95,10 @@ let request = SessionControlRequest(
 let socketPath = ProcessInfo.processInfo.environment["CONCLAWD_SOCKET"]
     ?? SessionControlProtocol.defaultSocketPath
 
+// Encode before connecting so the payload goes out immediately after connect().
+guard var payload = try? JSONEncoder().encode(request) else { fail("failed to encode request") }
+payload.append(0x0A)
+
 let fd = socket(AF_UNIX, SOCK_STREAM, 0)
 guard fd >= 0 else { fail("socket() failed") }
 
@@ -121,8 +125,6 @@ setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.siz
 var timeout = timeval(tv_sec: 15, tv_usec: 0)
 setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
 
-guard var payload = try? JSONEncoder().encode(request) else { fail("failed to encode request") }
-payload.append(0x0A)
 let sent = payload.withUnsafeBytes { raw -> Bool in
     var offset = 0
     while offset < raw.count {

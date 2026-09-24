@@ -66,6 +66,8 @@ final class SessionControlServer: @unchecked Sendable {
             return
         }
         _ = fcntl(fd, F_SETFL, O_NONBLOCK)
+        // Sessions spawned by the app must not inherit the listening socket.
+        _ = fcntl(fd, F_SETFD, FD_CLOEXEC)
 
         listenFd = fd
         let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: queue)
@@ -79,6 +81,15 @@ final class SessionControlServer: @unchecked Sendable {
         while true {
             let clientFd = accept(listenFd, nil, nil)
             guard clientFd >= 0 else { return }
+            // On macOS the accepted socket inherits O_NONBLOCK from the
+            // listening socket. Clear it so read() below waits (bounded by
+            // SO_RCVTIMEO) for the CLI's payload instead of returning EAGAIN
+            // and closing the connection before the client has written.
+            let flags = fcntl(clientFd, F_GETFL)
+            if flags >= 0 {
+                _ = fcntl(clientFd, F_SETFL, flags & ~O_NONBLOCK)
+            }
+            _ = fcntl(clientFd, F_SETFD, FD_CLOEXEC)
             var one: Int32 = 1
             setsockopt(clientFd, SOL_SOCKET, SO_NOSIGPIPE, &one,
                        socklen_t(MemoryLayout<Int32>.size))

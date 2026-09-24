@@ -464,12 +464,12 @@ final class AgentProcessManager {
         }
 
         var env = buildEnvironment()
-        if let memoryContext, !memoryContext.isEmpty {
-            switch provider {
-            case .claude:
-                env.append("_AGENT_TERMINAL_APPEND_PROMPT=\(memoryContext)")
-                args += ["--append-system-prompt", "$_AGENT_TERMINAL_APPEND_PROMPT"]
-            case .codex:
+        switch provider {
+        case .claude:
+            appendClaudeSystemPrompt(memoryContext: memoryContext, args: &args, env: &env)
+        case .codex:
+            appendCodexDeveloperInstructions(args: &args, env: &env)
+            if let memoryContext, !memoryContext.isEmpty {
                 // For Codex resume, inject memory via temporary AGENTS.md
                 writeTemporaryAgentsMd(systemPrompt: memoryContext, workingDirectory: workingDirectory)
             }
@@ -547,12 +547,12 @@ final class AgentProcessManager {
         }
 
         var env = buildEnvironment()
-        if let memoryContext, !memoryContext.isEmpty {
-            switch provider {
-            case .claude:
-                env.append("_AGENT_TERMINAL_APPEND_PROMPT=\(memoryContext)")
-                args += ["--append-system-prompt", "$_AGENT_TERMINAL_APPEND_PROMPT"]
-            case .codex:
+        switch provider {
+        case .claude:
+            appendClaudeSystemPrompt(memoryContext: memoryContext, args: &args, env: &env)
+        case .codex:
+            appendCodexDeveloperInstructions(args: &args, env: &env)
+            if let memoryContext, !memoryContext.isEmpty {
                 writeTemporaryAgentsMd(systemPrompt: memoryContext, workingDirectory: workingDirectory)
             }
         }
@@ -628,12 +628,12 @@ final class AgentProcessManager {
         }
 
         var env = buildEnvironment()
-        if let memoryContext, !memoryContext.isEmpty {
-            switch provider {
-            case .claude:
-                env.append("_AGENT_TERMINAL_APPEND_PROMPT=\(memoryContext)")
-                args += ["--append-system-prompt", "$_AGENT_TERMINAL_APPEND_PROMPT"]
-            case .codex:
+        switch provider {
+        case .claude:
+            appendClaudeSystemPrompt(memoryContext: memoryContext, args: &args, env: &env)
+        case .codex:
+            appendCodexDeveloperInstructions(args: &args, env: &env)
+            if let memoryContext, !memoryContext.isEmpty {
                 writeTemporaryAgentsMd(systemPrompt: memoryContext, workingDirectory: workingDirectory)
             }
         }
@@ -1319,12 +1319,32 @@ final class AgentProcessManager {
         if let memoryContext, !memoryContext.isEmpty {
             appendParts.append(memoryContext)
         }
-        if !appendParts.isEmpty {
-            let combined = appendParts.joined(separator: "\n\n---\n\n")
-            env.append("_AGENT_TERMINAL_APPEND_PROMPT=\(combined)")
-            args += ["--append-system-prompt", "$_AGENT_TERMINAL_APPEND_PROMPT"]
-        }
+        appendClaudeSystemPrompt(
+            memoryContext: appendParts.isEmpty ? nil : appendParts.joined(separator: "\n\n---\n\n"),
+            args: &args, env: &env)
         return args
+    }
+
+    /// Appends `--append-system-prompt` carrying the Conclawd integration
+    /// instructions (when the helper CLI is bundled) plus any extra context.
+    /// The payload travels through an environment variable so it never hits
+    /// the command line.
+    private func appendClaudeSystemPrompt(memoryContext: String?, args: inout [String], env: inout [String]) {
+        guard let prompt = SessionControlPrompt.combined(
+            with: memoryContext, cliAvailable: Self.sessionControlCLIPath != nil) else { return }
+        env.append("_AGENT_TERMINAL_APPEND_PROMPT=\(prompt)")
+        args += ["--append-system-prompt", "$_AGENT_TERMINAL_APPEND_PROMPT"]
+    }
+
+    /// Codex counterpart of `appendClaudeSystemPrompt`: passes the Conclawd
+    /// integration instructions through `-c developer_instructions=...`. The
+    /// whole TOML assignment travels in an environment variable that the login
+    /// shell expands into a single argument, so nothing is written to disk.
+    private func appendCodexDeveloperInstructions(args: inout [String], env: inout [String]) {
+        guard Self.sessionControlCLIPath != nil else { return }
+        let assignment = "developer_instructions=" + SessionControlPrompt.tomlBasicString(SessionControlPrompt.text)
+        env.append("_CONCLAWD_CODEX_INSTRUCTIONS=\(assignment)")
+        args += ["-c", "$_CONCLAWD_CODEX_INSTRUCTIONS"]
     }
 
     // MARK: - Codex Agent Args Builder
@@ -1346,6 +1366,8 @@ final class AgentProcessManager {
         if let workingDirectory {
             args += ["-C", workingDirectory]
         }
+
+        appendCodexDeveloperInstructions(args: &args, env: &env)
 
         // Inject system prompt + memory via temporary AGENTS.md
         var agentsMdContent = ""
