@@ -5,6 +5,25 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.1] - 2026-09-24
+
+### Changed
+
+- In-session Claude and Codex now learn the `conclawd open` / `conclawd split` commands
+  from the launch system prompt instead of skill files in `~/.claude/skills`; the
+  previously installed `conclawd-open-file` / session-split skills are removed
+- The source repository moved to github.com/btopia1128/conclawd-ide
+
+### Fixed
+
+- `conclawd` CLI requests could be dropped before the app read them
+- ⌘S sometimes did nothing because an editor hidden behind another tab took the
+  shortcut; File > Save now saves whatever is on screen
+- A failed file save no longer looks saved — an error is shown and the file stays
+  marked unsaved
+- A split pane could go blank right after opening or closing the split
+- The last line number was missing in empty files and files ending with a newline
+
 ## [0.2.0] - 2026-09-10
 
 ### Added
