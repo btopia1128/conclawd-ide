@@ -4,6 +4,40 @@ import SwiftTerm
 /// A single NSView container that manages showing one terminal view at a time.
 /// Terminal views are swapped in/out by sessionId, avoiding SwiftUI NSView re-parenting issues.
 class TerminalHostView: NSView {
+    /// The newest host created for each pane. SwiftUI keeps a replaced host
+    /// alive (faded to alpha 0, still in the window) for a while after a
+    /// structural change such as opening / closing the split, and keeps
+    /// sending it `updateNSView` — *after* the replacement host in the same
+    /// cycle. Without this registry the stale host re-parented the terminal
+    /// view into itself and the visible pane went blank until the next
+    /// selection change. Only the registered host for a pane may show a
+    /// terminal; every other host for that pane is stale and does nothing.
+    private static var liveHosts: [PaneID: WeakHost] = [:]
+    private struct WeakHost { weak var host: TerminalHostView? }
+
+    static func registerLiveHost(_ host: TerminalHostView) {
+        liveHosts[host.paneId] = WeakHost(host: host)
+    }
+
+    static func unregisterLiveHost(_ host: TerminalHostView) {
+        if liveHosts[host.paneId]?.host === host {
+            liveHosts[host.paneId] = nil
+        }
+    }
+
+    let paneId: PaneID
+
+    /// Whether this host is the one SwiftUI currently displays for its pane.
+    var isLive: Bool { Self.liveHosts[paneId]?.host === self }
+
+    init(paneId: PaneID) {
+        self.paneId = paneId
+        super.init(frame: .zero)
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
+
     private var currentSessionId: UUID?
     /// Track the actual displayed terminal view instance (not looked up from dict).
     /// This ensures we hide the correct view even if the dict entry was replaced (e.g. during resume).
@@ -27,7 +61,7 @@ class TerminalHostView: NSView {
         removeMouseDownMonitor()
         guard window != nil else { return }
         mouseDownMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
-            guard let self, let window = self.window, event.window === window else { return event }
+            guard let self, self.isLive, let window = self.window, event.window === window else { return event }
             let point = self.convert(event.locationInWindow, from: nil)
             if self.bounds.contains(point), !self.isHiddenOrHasHiddenAncestor {
                 self.onMouseDown?()
@@ -86,6 +120,9 @@ class TerminalHostView: NSView {
     }
 
     func showTerminal(for sessionId: UUID?) {
+        // A stale host (replaced by a newer one for the same pane) must never
+        // touch the terminal views; see `liveHosts`.
+        guard isLive else { return }
         let terminalView = sessionId.flatMap { processManager?.terminalViews[$0] }
 
         // Skip if same session AND same view instance (nothing changed)
@@ -140,6 +177,7 @@ class TerminalHostView: NSView {
 
 /// SwiftUI wrapper for the terminal host. Shows the terminal for the selected session.
 struct TerminalHostRepresentable: NSViewRepresentable {
+    let paneId: PaneID
     let selectedSessionId: UUID?
     let processManager: AgentProcessManager
     /// Called on mouse-down inside the terminal (used to activate the pane).
@@ -147,7 +185,9 @@ struct TerminalHostRepresentable: NSViewRepresentable {
     @Environment(\.colorScheme) private var colorScheme
 
     func makeNSView(context: Context) -> TerminalHostView {
-        let host = TerminalHostView()
+        let host = TerminalHostView(paneId: paneId)
+        // Newest host wins: from now on any older host for this pane is stale.
+        TerminalHostView.registerLiveHost(host)
         host.wantsLayer = true
         host.layer?.backgroundColor = TerminalTheme.current.background.cgColor
         host.configure(processManager: processManager)
@@ -167,5 +207,9 @@ struct TerminalHostRepresentable: NSViewRepresentable {
         host.configure(processManager: processManager)
         host.onMouseDown = onMouseDown
         host.showTerminal(for: selectedSessionId)
+    }
+
+    static func dismantleNSView(_ host: TerminalHostView, coordinator: ()) {
+        TerminalHostView.unregisterLiveHost(host)
     }
 }

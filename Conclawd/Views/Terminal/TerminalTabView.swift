@@ -44,6 +44,11 @@ struct TerminalTabView: View {
     /// target the pane the user actually clicked, not whichever pane happened
     /// to be active before.
     private func activatePane() {
+        // A secondary-pane view can outlive the split for a moment (SwiftUI
+        // keeps the removed view alive while it fades out). Activating a pane
+        // that no longer exists would make every forwarding accessor write a
+        // silent no-op, so ignore it.
+        guard paneId == .primary || appState.secondaryPane != nil else { return }
         if appState.activePaneId != paneId {
             appState.activePaneId = paneId
         }
@@ -604,6 +609,7 @@ struct TerminalTabView: View {
             if selectedAgentNeedsStart, let agent = paneSelectedAgent {
                 ZStack {
                     TerminalHostRepresentable(
+                        paneId: paneId,
                         selectedSessionId: displayedSessionId,
                         processManager: appState.processManager,
                         onMouseDown: activatePane
@@ -635,6 +641,7 @@ struct TerminalTabView: View {
                     }
 
                     TerminalHostRepresentable(
+                        paneId: paneId,
                         selectedSessionId: displayedSessionId,
                         processManager: appState.processManager,
                         onMouseDown: activatePane
