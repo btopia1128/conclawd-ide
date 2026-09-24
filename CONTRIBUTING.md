@@ -18,7 +18,7 @@ If you want to change or extend Conclawd, **fork the repository**. The [MIT Lice
 
 ## Reporting Issues
 
-Please use [GitHub Issues](https://github.com/rinte-ringoteto/conclawd-ide/issues) and include:
+Please use [GitHub Issues](https://github.com/btopia1128/conclawd-ide/issues) and include:
 
 - macOS version
 - Steps to reproduce the problem
@@ -30,7 +30,7 @@ Please use [GitHub Issues](https://github.com/rinte-ringoteto/conclawd-ide/issue
 If you want to run Conclawd locally:
 
 ```bash
-git clone https://github.com/rinte-ringoteto/conclawd-ide.git
+git clone https://github.com/btopia1128/conclawd-ide.git
 cd conclawd-ide
 xcodegen generate
 open Conclawd.xcodeproj

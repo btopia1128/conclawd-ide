@@ -43,7 +43,7 @@ Requirements:
 ### 1. Clone and generate project
 
 ```bash
-git clone https://github.com/rinte-ringoteto/conclawd-ide.git
+git clone https://github.com/btopia1128/conclawd-ide.git
 cd conclawd-ide
 xcodegen generate
 ```
@@ -118,7 +118,7 @@ Vendored code from [swift-transformers](https://github.com/huggingface/swift-tra
 
 ## Contributing
 
-- **Issues are welcome.** Bug reports, feature requests, and feedback via [GitHub Issues](https://github.com/rinte-ringoteto/conclawd-ide/issues) are appreciated.
+- **Issues are welcome.** Bug reports, feature requests, and feedback via [GitHub Issues](https://github.com/btopia1128/conclawd-ide/issues) are appreciated.
 - **Pull requests are not accepted.** PRs will not be reviewed or merged. This project is maintained solo, and the source is published for transparency rather than co-development.
 - **Want to change something?** Fork the repository. The MIT license lets you modify and redistribute your own version freely.
 
