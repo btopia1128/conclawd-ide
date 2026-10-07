@@ -10,7 +10,7 @@ enum SessionControlPrompt {
     static let text = """
     # Conclawd app integration
 
-    This session runs inside the Conclawd macOS app. The app bundles a helper CLI whose path is in `$CONCLAWD_CLI`. Use it for the two requests below; report the command's outcome honestly and never claim success if it failed.
+    This session runs inside the Conclawd macOS app. The app bundles a helper CLI whose path is in `$CONCLAWD_CLI`. Use it for the requests below; report the command's outcome honestly and never claim success if it failed.
 
     ## Open a file in the editor pane
 
@@ -34,6 +34,18 @@ enum SessionControlPrompt {
        ```
        `--cwd` defaults to the current directory; pass it when the topic belongs to another project.
     4. Relay the output, then continue the current conversation with the remaining topics.
+
+    The new session runs the same agent and model as this one. To run a specific agent instead — e.g. when the user asks to start a session with an agent ("〇〇エージェントでセッション起動して"), including one you just created — add `--agent "<agent name or absolute path to its .md file>"`. A name is looked up in `<cwd>/.claude/agents/` and then `~/.claude/agents/`; prefer the absolute path for an agent you just wrote. Without `--cwd`, the session starts in the agent's project root.
+
+    ## Register a project
+
+    Conclawd only lists agents from `~/.claude/agents/` and from registered projects. Whenever you create an agent file under `<dir>/.claude/agents/`, or the user asks to add a directory as a project (e.g. "プロジェクトに追加して"), run:
+
+    ```bash
+    "$CONCLAWD_CLI" add-project "<absolute project root>"
+    ```
+
+    It is a no-op for directories that are already registered and does not switch the user's current project.
     """
 
     /// Combines this fragment with an optional memory context into one

@@ -3,7 +3,7 @@ import Foundation
 /// Persists shell presets in a single JSON file under ~/.claude/agent-terminal/.
 struct ShellPresetService {
 
-    private static let fileURL: URL = {
+    static let fileURL: URL = {
         FileManager.default.homeDirectoryForCurrentUser
             .appending(path: ".claude/agent-terminal/shell-presets.json")
     }()
@@ -20,6 +20,13 @@ struct ShellPresetService {
             print("[ShellPresetService] Failed to load presets: \(error)")
             return []
         }
+    }
+
+    /// Like `loadPresets`, but returns nil when the file is missing or unreadable
+    /// (e.g. caught mid-write by another process) instead of an empty list.
+    func loadPresetsIfValid() -> [ShellPreset]? {
+        guard let data = try? Data(contentsOf: Self.fileURL) else { return nil }
+        return try? JSONDecoder().decode([ShellPreset].self, from: data)
     }
 
     func savePresets(_ presets: [ShellPreset]) {

@@ -122,7 +122,8 @@ final class AgentProcessManager {
         }
 
         let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
-        let env = buildEnvironment()
+        var env = buildEnvironment()
+        env.append("CONCLAWD_SESSION_ID=\(sessionId.uuidString)")
 
         terminalView.startProcess(
             executable: shell,
@@ -205,6 +206,7 @@ final class AgentProcessManager {
 
         // System prompt via env var
         var env = buildEnvironment()
+        env.append("CONCLAWD_SESSION_ID=\(sessionId.uuidString)")
         if let systemPrompt, !systemPrompt.isEmpty {
             switch provider {
             case .claude:
@@ -842,6 +844,37 @@ final class AgentProcessManager {
             .sorted { abs($0.1.timeIntervalSince(aroundTime)) < abs($1.1.timeIntervalSince(aroundTime)) }
 
         return candidates.first?.0
+    }
+
+    /// Returns the model ID of the most recent assistant message in a Claude
+    /// transcript — the model the session is actually running, including any
+    /// in-session `/model` switch. Only the file's tail is scanned.
+    static func latestClaudeModel(resumeId: String, workingDirectory: String) -> String? {
+        let trimmed = workingDirectory.hasSuffix("/") ? String(workingDirectory.dropLast()) : workingDirectory
+        let projectHash = trimmed.replacingOccurrences(of: "/", with: "-")
+        let transcript = FileManager.default.homeDirectoryForCurrentUser
+            .appending(path: ".claude/projects")
+            .appending(path: projectHash)
+            .appending(path: "\(resumeId).jsonl")
+        guard let handle = try? FileHandle(forReadingFrom: transcript) else { return nil }
+        defer { try? handle.close() }
+
+        let tailSize: UInt64 = 1_048_576
+        guard let fileSize = try? handle.seekToEnd() else { return nil }
+        try? handle.seek(toOffset: fileSize > tailSize ? fileSize - tailSize : 0)
+        guard let data = try? handle.readToEnd(),
+              let text = String(data: data, encoding: .utf8) else { return nil }
+
+        for line in text.split(separator: "\n").reversed() {
+            guard line.contains("\"assistant\""),
+                  let json = try? JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: Any],
+                  json["type"] as? String == "assistant",
+                  let message = json["message"] as? [String: Any],
+                  let model = message["model"] as? String,
+                  !model.isEmpty, !model.hasPrefix("<") else { continue } // skip "<synthetic>"
+            return model
+        }
+        return nil
     }
 
     // MARK: - Codex Session ID Detection

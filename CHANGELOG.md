@@ -5,6 +5,28 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-10-07
+
+### Added
+
+- `conclawd split --agent <name|path>` starts the new session with a specific agent
+  (looked up in `<cwd>/.claude/agents/`, then `~/.claude/agents/`, or given as a path
+  to its `.md` file); without `--cwd` it starts in the agent's project root
+- `conclawd add-project <dir>` registers a directory as a project so its agents appear
+  in the Agents list, without switching the current project
+- Shell presets reload automatically when `~/.claude/agent-terminal/shell-presets.json`
+  is edited outside the app — no restart needed
+
+### Changed
+
+- `conclawd split` without `--agent` now launches the new session with the same agent
+  and model as the session that called it (including an in-session `/model` switch)
+
+### Fixed
+
+- Agents in a project's `.claude/agents/` created after the project was opened
+  (e.g. by a CLI session) now show up without reopening the project
+
 ## [0.2.1] - 2026-09-24
 
 ### Changed

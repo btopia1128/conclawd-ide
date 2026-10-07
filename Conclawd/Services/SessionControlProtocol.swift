@@ -21,10 +21,30 @@ struct SessionControlRequest: Codable, Sendable {
     var prompt: String?
     var cwd: String?
     var path: String?
+    /// `$CONCLAWD_SESSION_ID` of the session that ran the CLI, so `split` can
+    /// launch the new session with the same agent and model.
+    var sourceSessionId: String?
+    /// `split --agent`: agent name or absolute path to its `.md` file. The new
+    /// session runs that agent instead of the requesting session's.
+    var agent: String?
+    /// `split --agent`: the CLI's current directory. Agent names are looked up
+    /// in its `.claude/agents/`, and it is the fallback working directory when
+    /// neither `--cwd` nor the agent provides one. (`cwd` is only sent when
+    /// `--cwd` was given, so a project agent starts in its own project root.)
+    var callerDirectory: String?
+}
+
+/// Error reported back to the CLI as the response's `error` text.
+struct SessionControlError: LocalizedError {
+    let message: String
+    init(_ message: String) { self.message = message }
+    var errorDescription: String? { message }
 }
 
 struct SessionControlResponse: Codable, Sendable {
     var ok: Bool
     var sessionId: String?
     var error: String?
+    /// `add-project` only: true when the directory was already registered.
+    var alreadyRegistered: Bool? = nil
 }

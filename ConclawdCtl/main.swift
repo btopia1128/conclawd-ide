@@ -7,15 +7,24 @@ import Foundation
 // $CONCLAWD_SOCKET.
 
 let usage = """
-usage: conclawd split --title <title> (--prompt <text> | --prompt-file <path>) [--cwd <dir>]
+usage: conclawd split --title <title> (--prompt <text> | --prompt-file <path>) [--cwd <dir>] [--agent <name|path>]
        conclawd open <path>
+       conclawd add-project <dir>
 
 split: Creates a new session tab in the running Conclawd app. The prompt is
 submitted to the new session automatically once it finishes starting. --cwd
-defaults to the current directory.
+defaults to the current directory. Without --agent the new session runs the
+same agent and model as the session that called it. --agent runs the given
+agent instead (a name, looked up in <cwd>/.claude/agents/ then
+~/.claude/agents/, or a path to its .md file); it then starts in --cwd if
+given, otherwise in the agent's own directory (its project root).
 
 open: Opens the file at <path> in the Conclawd editor pane. Relative paths are
 resolved against the current directory.
+
+add-project: Registers <dir> as a Conclawd project so the agents in its
+.claude/agents/ appear in the Agents list. The current project selection is
+left unchanged. Relative paths are resolved against the current directory.
 """
 
 func fail(_ message: String) -> Never {
@@ -34,6 +43,7 @@ var title: String?
 var prompt: String?
 var cwd: String?
 var openPath: String?
+var agent: String?
 
 switch command {
 case "split":
@@ -58,6 +68,12 @@ case "split":
             prompt = contents
         case "--cwd":
             cwd = value()
+        case "--agent":
+            let spec = value()
+            // Resolve paths here — the app has a different working directory.
+            agent = spec.contains("/") || spec.hasSuffix(".md")
+                ? URL(fileURLWithPath: spec).standardizedFileURL.path
+                : spec
         case "-h", "--help":
             print(usage)
             exit(0)
@@ -80,6 +96,15 @@ case "open":
     }
     // Resolve relative paths here — the app has a different working directory.
     openPath = URL(fileURLWithPath: rawPath).standardizedFileURL.path
+case "add-project":
+    guard arguments.count == 1, let rawPath = arguments.first, !rawPath.isEmpty else {
+        fail("add-project takes exactly one directory path\n\(usage)")
+    }
+    if rawPath == "-h" || rawPath == "--help" {
+        print(usage)
+        exit(0)
+    }
+    openPath = URL(fileURLWithPath: rawPath).standardizedFileURL.path
 default:
     fail("unknown command '\(command)'\n\(usage)")
 }
@@ -88,8 +113,15 @@ let request = SessionControlRequest(
     command: command,
     title: title,
     prompt: prompt,
-    cwd: command == "split" ? (cwd ?? FileManager.default.currentDirectoryPath) : nil,
-    path: openPath
+    // With --agent, an implicit cwd is left to the agent's own directory.
+    cwd: command == "split"
+        ? (cwd.map { URL(fileURLWithPath: $0).standardizedFileURL.path }
+            ?? (agent == nil ? FileManager.default.currentDirectoryPath : nil))
+        : nil,
+    path: openPath,
+    sourceSessionId: command == "split" ? ProcessInfo.processInfo.environment["CONCLAWD_SESSION_ID"] : nil,
+    agent: agent,
+    callerDirectory: agent == nil ? nil : FileManager.default.currentDirectoryPath
 )
 
 let socketPath = ProcessInfo.processInfo.environment["CONCLAWD_SOCKET"]
@@ -158,9 +190,16 @@ if response.ok {
     switch command {
     case "open":
         print("Opened \(openPath ?? "the file") in the Conclawd editor.")
+    case "add-project":
+        if response.alreadyRegistered == true {
+            print("\(openPath ?? "The directory") is already a Conclawd project.")
+        } else {
+            print("Added \(openPath ?? "the directory") as a Conclawd project.")
+        }
     default:
         let label = title.map { " \"\($0)\"" } ?? ""
-        print("Created new session tab\(label). "
+        let agentLabel = agent.map { " running agent \($0)" } ?? ""
+        print("Created new session tab\(label)\(agentLabel). "
             + "The handoff prompt will be submitted automatically once the session is ready.")
     }
 } else {

@@ -552,6 +552,9 @@ final class AppState {
     var lastGitError: String?
     /// Watches .git/HEAD for external branch changes.
     private let gitHeadWatcher = FileWatcherService(debounceInterval: 0.3)
+    /// Watches shell-presets.json so presets added outside the app (an editor, a
+    /// script, another agent) show up without restarting.
+    private let shellPresetWatcher = OpenFileWatcherService(debounceInterval: 0.3)
 
     /// Chat session managers keyed by session ID (for chat-mode sessions).
     var chatManagers: [UUID: ChatSessionManager] = [:]
@@ -609,6 +612,7 @@ final class AppState {
         skillUsageService.repairHookIfNeeded()
         refreshGitStatus()
         setupGitHeadWatcher()
+        setupShellPresetWatcher()
 
         // Process memory extraction for sessions that were interrupted by app quit
         processPendingMemoryExtractions()
@@ -2446,6 +2450,9 @@ final class AppState {
 
         try? FileManager.default.createDirectory(at: targetDir, withIntermediateDirectories: true)
 
+        // Ensure the agents directory is being watched (it may not have existed at setupFileWatcher time)
+        fileWatcher.watch(directory: targetDir)
+
         let session = CreationSession(targetScope: scope, targetDirectory: targetDir)
         let systemPrompt = buildCreationPrompt(targetDirectory: targetDir.path(percentEncoded: false))
 
@@ -2993,6 +3000,23 @@ final class AppState {
         shellPresets = shellPresetService.loadPresets()
     }
 
+    private func setupShellPresetWatcher() {
+        let url = ShellPresetService.fileURL
+        // The watch needs an existing file; create an empty list on first launch.
+        if !FileManager.default.fileExists(atPath: url.path(percentEncoded: false)) {
+            shellPresetService.savePresets([])
+        }
+        shellPresetWatcher.onFileChanged = { [weak self] _ in
+            guard let self else { return }
+            // Keep the current list if the file is mid-write or broken, so a later
+            // save from the app doesn't persist an empty list over it.
+            guard let loaded = self.shellPresetService.loadPresetsIfValid() else { return }
+            // Our own saves fire this too; skip when nothing actually changed.
+            if loaded != self.shellPresets { self.shellPresets = loaded }
+        }
+        shellPresetWatcher.watch(id: UUID(), url: url)
+    }
+
     func saveShellPreset(_ preset: ShellPreset) {
         if let idx = shellPresets.firstIndex(where: { $0.id == preset.id }) {
             shellPresets[idx] = preset
@@ -3081,7 +3105,19 @@ final class AppState {
             return
         }
 
-        let provider = provider ?? agent.defaultProvider
+        do {
+            let sessionId = try launchAgentSession(agent, provider: provider ?? agent.defaultProvider)
+            selectedSessionId = sessionId
+            selectedAgentId = agent.id
+            centerPane = .terminal
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    /// Launches a CLI session for the agent (memory context included) and adds
+    /// its tab without changing the selection. Returns the new session ID.
+    private func launchAgentSession(_ agent: Agent, provider: CLIProviderType) throws -> UUID {
         // Build memory context if enabled
         var memoryContext: String? = nil
         if agent.memoryEnabled {
@@ -3095,17 +3131,11 @@ final class AppState {
         // Resolve memory DB path for MCP recall_memory
         let memoryDbPath = memoryDatabaseManager.databasePath(for: agent)
 
-        do {
-            let sessionId = try processManager.start(agent: agent, memoryContext: memoryContext, memoryDbPath: memoryDbPath, provider: provider)
-            let session = AgentSession(id: sessionId, agentId: agent.id, agentName: agent.name, agentFilePath: agent.filePath?.path(percentEncoded: false), workingDirectory: agent.effectiveDirectory, cliProviderType: provider, paneId: activePaneId)
-            activeSessions.append(session)
-            sessionHistoryService.recordSessionStart(session: session)
-            selectedSessionId = sessionId
-            selectedAgentId = agent.id
-            centerPane = .terminal
-        } catch {
-            errorMessage = error.localizedDescription
-        }
+        let sessionId = try processManager.start(agent: agent, memoryContext: memoryContext, memoryDbPath: memoryDbPath, provider: provider)
+        let session = AgentSession(id: sessionId, agentId: agent.id, agentName: agent.name, agentFilePath: agent.filePath?.path(percentEncoded: false), workingDirectory: agent.effectiveDirectory, cliProviderType: provider, paneId: activePaneId)
+        activeSessions.append(session)
+        sessionHistoryService.recordSessionStart(session: session)
+        return sessionId
     }
 
     /// Starts a new chat-mode session for the agent (uses stream-json instead of PTY).
@@ -4008,6 +4038,8 @@ final class AppState {
             return handleSessionSplitRequest(request)
         case "open":
             return handleOpenFileRequest(request)
+        case "add-project":
+            return handleAddProjectRequest(request)
         default:
             return SessionControlResponse(ok: false, sessionId: nil, error: "unknown command '\(request.command)'")
         }
@@ -4035,9 +4067,115 @@ final class AppState {
         return SessionControlResponse(ok: true, sessionId: nil, error: nil)
     }
 
+    /// Handles a `conclawd add-project` request: registers the directory as a
+    /// project so its `.claude/agents/` show up, without switching the current
+    /// project selection.
+    private func handleAddProjectRequest(_ request: SessionControlRequest) -> SessionControlResponse {
+        guard let path = request.path, !path.isEmpty else {
+            return SessionControlResponse(ok: false, sessionId: nil, error: "a directory path is required")
+        }
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory) else {
+            return SessionControlResponse(ok: false, sessionId: nil, error: "directory not found: \(path)")
+        }
+        guard isDirectory.boolValue else {
+            return SessionControlResponse(ok: false, sessionId: nil, error: "path is a file, not a directory: \(path)")
+        }
+
+        let added = registerProjectIfNeeded(URL(fileURLWithPath: path, isDirectory: true))
+        return SessionControlResponse(ok: true, sessionId: nil, error: nil, alreadyRegistered: !added)
+    }
+
+    /// Registers the directory as a project unless it already is one, leaving the
+    /// current project selection unchanged. Returns true when it was added.
+    @discardableResult
+    private func registerProjectIfNeeded(_ url: URL) -> Bool {
+        // Stored URLs may or may not carry a trailing slash, so compare paths.
+        func normalized(_ url: URL) -> String {
+            let p = url.standardizedFileURL.path(percentEncoded: false)
+            return p.count > 1 && p.hasSuffix("/") ? String(p.dropLast()) : p
+        }
+        let directory = url.standardizedFileURL
+        let normalizedPath = normalized(directory)
+        if projects.contains(where: { normalized($0.directoryPath) == normalizedPath }) {
+            return false
+        }
+
+        projects.insert(Project(name: directory.lastPathComponent, directoryPath: directory), at: 0)
+        saveRecentProjects()
+        if projectSelection == .all {
+            reloadAgents()
+            reloadSkills()
+            registerWatchDirectories()
+        }
+        return true
+    }
+
+    /// Resolves `conclawd split --agent`: an absolute path to an agent `.md` file,
+    /// or an agent name looked up in the session's and the caller's
+    /// `.claude/agents/`, then `~/.claude/agents/`, then the loaded agents.
+    /// Reading from disk lets an agent created moments ago (or in a project not
+    /// shown in the sidebar) be used right away.
+    private func resolveSplitAgent(_ spec: String, searchDirectories: [URL]) throws -> Agent {
+        let userAgentsDir = FileManager.default.homeDirectoryForCurrentUser.appending(path: ".claude/agents")
+
+        func parse(_ file: URL) -> Agent? {
+            let isUser = file.deletingLastPathComponent().standardizedFileURL.path(percentEncoded: false)
+                == userAgentsDir.standardizedFileURL.path(percentEncoded: false)
+            return configService.parseAgentFile(at: file, scope: isUser ? .user : .project)
+        }
+
+        // Prefer the loaded instance so its ID and local directory override carry over.
+        func preferLoaded(_ agent: Agent) -> Agent {
+            let path = agent.filePath?.standardizedFileURL.path(percentEncoded: false)
+            var resolved = agents.first(where: { $0.filePath?.standardizedFileURL.path(percentEncoded: false) == path }) ?? agent
+            if resolved.scope == .project, resolved.sourceProjectName == nil {
+                resolved.sourceProjectName = resolved.projectRootDirectory?.lastPathComponent
+            }
+            return resolved
+        }
+
+        if spec.hasPrefix("/") {
+            let file = URL(fileURLWithPath: spec)
+            guard FileManager.default.fileExists(atPath: file.path(percentEncoded: false)) else {
+                throw SessionControlError("agent file not found: \(spec)")
+            }
+            guard let agent = parse(file) else {
+                throw SessionControlError("cannot parse agent file (missing YAML frontmatter?): \(spec)")
+            }
+            return preferLoaded(agent)
+        }
+
+        let fm = FileManager.default
+        var seen = Set<String>()
+        let directories = (searchDirectories.map { $0.appending(path: ".claude/agents") } + [userAgentsDir])
+            .filter { seen.insert($0.standardizedFileURL.path(percentEncoded: false)).inserted }
+        for dir in directories {
+            let direct = dir.appending(path: "\(spec).md")
+            if fm.fileExists(atPath: direct.path(percentEncoded: false)), let agent = parse(direct) {
+                return preferLoaded(agent)
+            }
+            let files = (try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
+            for file in files where file.pathExtension == "md" {
+                if let agent = parse(file), agent.name == spec {
+                    return preferLoaded(agent)
+                }
+            }
+        }
+
+        let matches = agents.filter { $0.name == spec }
+        if matches.count == 1 { return matches[0] }
+        if matches.count > 1 {
+            let paths = matches.compactMap { $0.filePath?.path(percentEncoded: false) }.joined(separator: ", ")
+            throw SessionControlError("agent name '\(spec)' is ambiguous; pass the file path instead: \(paths)")
+        }
+        throw SessionControlError("agent '\(spec)' not found in \(directories.map { $0.path(percentEncoded: false) }.joined(separator: ", ")) or the Agents list")
+    }
+
     /// Handles a `conclawd split` request: opens a new session tab (without
     /// stealing focus from the requesting session) and queues the handoff
-    /// prompt for delivery on the session's first idle.
+    /// prompt for delivery on the session's first idle. The new session runs
+    /// the requesting session's agent and model when those can be resolved.
     private func handleSessionSplitRequest(_ request: SessionControlRequest) -> SessionControlResponse {
         guard let prompt = request.prompt,
               !prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -4055,8 +4193,60 @@ final class AppState {
         }
 
         let trimmedTitle = request.title?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        // Explicit agent → that agent with its own model and provider.
+        if let spec = request.agent?.trimmingCharacters(in: .whitespacesAndNewlines), !spec.isEmpty {
+            let callerDirectory = request.callerDirectory.map { URL(fileURLWithPath: $0) }
+            do {
+                var agent = try resolveSplitAgent(spec, searchDirectories: [workingDirectory, callerDirectory].compactMap { $0 })
+                if agent.scope == .project, let root = agent.projectRootDirectory,
+                   registerProjectIfNeeded(root) {
+                    // Registering reloads the Agents list; take the reloaded instance so
+                    // the session links to the agent shown in the sidebar.
+                    let path = agent.filePath?.standardizedFileURL.path(percentEncoded: false)
+                    agent = agents.first(where: { $0.filePath?.standardizedFileURL.path(percentEncoded: false) == path }) ?? agent
+                }
+                if let directory = workingDirectory ?? (agent.effectiveDirectory == nil ? callerDirectory : nil) {
+                    agent.localDirectory = directory
+                }
+                let sessionId = try launchAgentSession(agent, provider: agent.defaultProvider)
+                if !trimmedTitle.isEmpty {
+                    renameSession(sessionId: sessionId, name: trimmedTitle)
+                }
+                pendingHandoffPrompts[sessionId] = prompt
+                return SessionControlResponse(ok: true, sessionId: sessionId.uuidString, error: nil)
+            } catch {
+                return SessionControlResponse(ok: false, sessionId: nil, error: error.localizedDescription)
+            }
+        }
+
+        let source = request.sourceSessionId
+            .flatMap(UUID.init(uuidString:))
+            .flatMap { id in activeSessions.first(where: { $0.id == id }) }
+        let sourceModel = source.flatMap(runningClaudeModel(of:))
+
+        // Agent session → same agent (raw-command agents can't take a model,
+        // so they fall through to a plain session).
+        if let source, var agent = agents.first(where: { $0.id == source.agentId })
+            ?? source.agentFilePath.flatMap({ path in agents.first(where: { $0.filePath?.path(percentEncoded: false) == path }) }),
+           agent.rawCommand?.isEmpty ?? true {
+            if let workingDirectory { agent.localDirectory = workingDirectory }
+            if let sourceModel { agent.model = .custom(sourceModel) }
+            do {
+                let sessionId = try launchAgentSession(agent, provider: source.cliProviderType)
+                if !trimmedTitle.isEmpty {
+                    renameSession(sessionId: sessionId, name: trimmedTitle)
+                }
+                pendingHandoffPrompts[sessionId] = prompt
+                return SessionControlResponse(ok: true, sessionId: sessionId.uuidString, error: nil)
+            } catch {
+                return SessionControlResponse(ok: false, sessionId: nil, error: error.localizedDescription)
+            }
+        }
+
         do {
             let sessionId = try processManager.startStandalone(
+                model: sourceModel.map { .custom($0) } ?? .inherit,
                 workingDirectory: workingDirectory?.path(percentEncoded: false)
             )
             let session = AgentSession(
@@ -4073,6 +4263,19 @@ final class AppState {
         } catch {
             return SessionControlResponse(ok: false, sessionId: nil, error: error.localizedDescription)
         }
+    }
+
+    /// The model a Claude session is actually running (reflects in-session
+    /// `/model` switches), read from its transcript. Nil until the transcript
+    /// is located or for non-Claude sessions.
+    private func runningClaudeModel(of session: AgentSession) -> String? {
+        guard session.cliProviderType == .claude,
+              let resumeId = processManager.processes[session.id]?.claudeResumeId,
+              let workingDirectory = session.workingDirectory else { return nil }
+        return AgentProcessManager.latestClaudeModel(
+            resumeId: resumeId,
+            workingDirectory: workingDirectory.path(percentEncoded: false)
+        )
     }
 
     /// Sends a queued handoff prompt once the split session first goes idle.
@@ -4320,6 +4523,25 @@ final class AppState {
         registerWatchDirectories()
     }
 
+    /// Watches a project's agent/skill directories. Only existing directories can
+    /// be watched, so until `.claude/` exists the project root is watched instead —
+    /// otherwise a `.claude/agents/` created later (e.g. by a CLI session) would
+    /// never trigger a change and its agents would not appear.
+    private func registerProjectWatchDirectories(_ project: Project) {
+        let claudeDir = project.directoryPath.appending(path: ".claude")
+        if FileManager.default.fileExists(atPath: claudeDir.path(percentEncoded: false)) {
+            fileWatcher.stopWatching(directory: project.directoryPath)
+        } else {
+            fileWatcher.watch(directory: project.directoryPath)
+        }
+        // Watch .claude/ parent so we detect when agents/ or skills/ dirs are first created
+        fileWatcher.watch(directory: claudeDir)
+        fileWatcher.watch(directory: project.agentsDirectory)
+        fileWatcher.watch(directory: project.skillsDirectory)
+        // Codex skills path (.agents/skills/)
+        fileWatcher.watch(directory: project.codexSkillsDirectory)
+    }
+
     /// Register file watchers for agent/skill/memory directories.
     /// Safe to call multiple times — `FileWatcherService.watch()` deduplicates by path.
     private func registerWatchDirectories() {
@@ -4329,19 +4551,11 @@ final class AppState {
             break
 
         case .project(let project):
-            // Watch .claude/ parent so we detect when agents/ or skills/ dirs are first created
-            fileWatcher.watch(directory: project.directoryPath.appending(path: ".claude"))
-            fileWatcher.watch(directory: project.agentsDirectory)
-            fileWatcher.watch(directory: project.skillsDirectory)
-            // Codex skills path (.agents/skills/)
-            fileWatcher.watch(directory: project.codexSkillsDirectory)
+            registerProjectWatchDirectories(project)
 
         case .all:
             for project in projects {
-                fileWatcher.watch(directory: project.directoryPath.appending(path: ".claude"))
-                fileWatcher.watch(directory: project.agentsDirectory)
-                fileWatcher.watch(directory: project.skillsDirectory)
-                fileWatcher.watch(directory: project.codexSkillsDirectory)
+                registerProjectWatchDirectories(project)
             }
         }
 
