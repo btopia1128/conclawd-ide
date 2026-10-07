@@ -124,6 +124,12 @@ final class AgentProcessManager {
         let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
         var env = buildEnvironment()
         env.append("CONCLAWD_SESSION_ID=\(sessionId.uuidString)")
+        // A raw command gets no `--append-system-prompt` from the app, so hand
+        // the integration instructions over in the environment; wrapper
+        // scripts that launch claude can pass them on themselves.
+        if Self.sessionControlCLIPath != nil {
+            env.append("CONCLAWD_SESSION_PROMPT=\(SessionControlPrompt.text)")
+        }
 
         terminalView.startProcess(
             executable: shell,
