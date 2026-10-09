@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-10-10
+
+### Fixed
+
+- Agent memory with `shared` storage is now saved under
+  `<project>/.claude/agent-memory/<name>.memory/` (user-scope agents:
+  `~/.claude/agent-memory/<name>.memory/`) instead of next to the agent file.
+  Claude Code reads every `.md` under `.claude/agents/` as an agent, so
+  memories stored there showed up as bogus agents and triggered the
+  "Agent descriptions are over the token limit" warning
+- Existing `<name>.memory/` folders in `.claude/agents/` are moved to the
+  new location automatically when agents are loaded (files that already
+  exist at the destination are left in place)
+
+### Changed
+
+- Raw-command sessions now receive the integration instructions in the
+  `CONCLAWD_SESSION_PROMPT` environment variable, so wrapper scripts can
+  forward them to Claude
+
 ## [0.3.0] - 2026-10-07
 
 ### Added
