@@ -322,7 +322,7 @@ enum SkillContext: String, CaseIterable, Hashable {
 // MARK: - Memory Storage
 
 /// Where agent memory files are stored.
-/// - `shared`: next to the agent .md file (in project repo, shared via Git)
+/// - `shared`: under <project>/.claude/agent-memory/ (in project repo, shared via Git)
 /// - `private`: under ~/.claude/agent-memory/ (local only, not shared)
 enum MemoryStorage: String, Codable, CaseIterable, Hashable {
     case shared

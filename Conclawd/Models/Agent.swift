@@ -77,9 +77,13 @@ struct Agent: Identifiable, Hashable, @unchecked Sendable {
     }
 
     /// Memory directory for the given storage type.
+    ///
+    /// Kept outside `.claude/agents/`: Claude Code scans that folder recursively and
+    /// treats every .md under it as an agent definition, so memories placed there
+    /// show up as hundreds of bogus agents.
     func memoryDirectory(for storage: MemoryStorage) -> URL? {
         guard let filePath else { return nil }
-        let nameWithoutExt = filePath.deletingPathExtension().lastPathComponent
+        let dirName = "\(filePath.deletingPathExtension().lastPathComponent).memory"
 
         if storage == .private && scope == .project {
             let home = FileManager.default.homeDirectoryForCurrentUser
@@ -90,12 +94,13 @@ struct Agent: Identifiable, Hashable, @unchecked Sendable {
             return home
                 .appending(path: ".claude/agent-memory")
                 .appending(path: projectSlug)
-                .appending(path: "\(nameWithoutExt).memory")
+                .appending(path: dirName)
         }
 
-        // Shared, or user-scope agents (already local)
-        return filePath.deletingLastPathComponent()
-            .appending(path: "\(nameWithoutExt).memory")
+        // Shared → <project>/.claude/agent-memory/, user-scope agents → ~/.claude/agent-memory/
+        return projectRootDirectory?
+            .appending(path: ".claude/agent-memory")
+            .appending(path: dirName)
     }
 
     /// The default memory directory based on the agent's current storage setting.

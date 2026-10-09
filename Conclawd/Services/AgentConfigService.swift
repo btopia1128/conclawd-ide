@@ -37,6 +37,8 @@ final class AgentConfigService {
         let fm = FileManager.default
         guard fm.fileExists(atPath: directory.path(percentEncoded: false)) else { return ([], []) }
 
+        migrateLegacyMemoryDirectories(in: directory)
+
         do {
             let files = try fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
                 .filter { $0.pathExtension == "md" }
@@ -60,6 +62,45 @@ final class AgentConfigService {
         } catch {
             print("Failed to list agents directory: \(error)")
             return ([], [])
+        }
+    }
+
+    /// Move `<name>.memory/` folders out of the agents directory into the sibling
+    /// `agent-memory/` (see `Agent.memoryDirectory(for:)`). Claude Code reads every .md
+    /// under `.claude/agents/` as an agent, so memories left there pollute its agent list.
+    /// Orphaned folders (agent file already deleted) are moved too.
+    private func migrateLegacyMemoryDirectories(in agentsDirectory: URL) {
+        let fm = FileManager.default
+        guard let entries = try? fm.contentsOfDirectory(at: agentsDirectory, includingPropertiesForKeys: [.isDirectoryKey]) else { return }
+        let legacyDirs = entries.filter {
+            $0.pathExtension == "memory" && (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+        }
+        guard !legacyDirs.isEmpty else { return }
+
+        let memoryRoot = agentsDirectory.deletingLastPathComponent().appending(path: "agent-memory")
+        for legacy in legacyDirs {
+            let target = memoryRoot.appending(path: legacy.lastPathComponent)
+            do {
+                try fm.createDirectory(at: memoryRoot, withIntermediateDirectories: true)
+                if !fm.fileExists(atPath: target.path(percentEncoded: false)) {
+                    try fm.moveItem(at: legacy, to: target)
+                    continue
+                }
+                // Both exist: move over what the target lacks, keep conflicts in place.
+                for item in try fm.contentsOfDirectory(at: legacy, includingPropertiesForKeys: nil) {
+                    let dest = target.appending(path: item.lastPathComponent)
+                    if !fm.fileExists(atPath: dest.path(percentEncoded: false)) {
+                        try fm.moveItem(at: item, to: dest)
+                    }
+                }
+                if (try fm.contentsOfDirectory(atPath: legacy.path(percentEncoded: false))).isEmpty {
+                    try fm.removeItem(at: legacy)
+                } else {
+                    print("[AgentConfigService] Left conflicting files in \(legacy.path(percentEncoded: false))")
+                }
+            } catch {
+                print("[AgentConfigService] Failed to migrate \(legacy.path(percentEncoded: false)): \(error)")
+            }
         }
     }
 
