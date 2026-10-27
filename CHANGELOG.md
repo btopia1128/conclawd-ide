@@ -5,6 +5,34 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-10-28
+
+### Added
+
+- Session status now comes from Claude Code hooks instead of being
+  guessed from terminal output, so a session no longer shows "Ready"
+  while Claude is still answering
+- New "Background" status (blue) when a turn has ended but background
+  shells or subagents are still running, with the task count in the
+  session row
+- Images, video, audio and HTML written by Claude open automatically
+  in the pane beside the session (toggle in Settings > Terminal)
+- HTML files render as a page in the editor, with a source toggle
+- `conclawd open --beside <path>` opens a file next to the calling
+  session, splitting the window if needed
+- ⌘-click a local path in the terminal to open it beside the session
+- "New Session With" menu to restart a session on another CLI provider
+
+### Changed
+
+- Debug builds use their own bundle ID (`com.conclawd.app.dev`) and
+  socket, so they no longer overwrite or break the Release app
+
+### Fixed
+
+- Opening a file no longer crashes the app when syntax highlighting
+  fails to initialize; the editor falls back to plain text
+
 ## [0.3.1] - 2026-10-10
 
 ### Fixed
