@@ -332,6 +332,11 @@ struct TerminalTabView: View {
                 appState.draggingTabSourcePane = paneId
                 return NSItemProvider(object: file.id.uuidString as NSString)
             }
+            .onDrop(of: [UTType.text], delegate: TabReorderDropDelegate(
+                targetId: file.id,
+                draggingId: $draggingFileId,
+                reorder: { fromId, toId in reorderFiles(from: fromId, to: toId) }
+            ))
         }
     }
 
@@ -933,6 +938,20 @@ struct TerminalTabView: View {
                     Button(l10n.duplicate) {
                         activatePane()
                         appState.duplicateSession(sessionId: session.id)
+                    }
+                }
+
+                if appState.providerSwitchableAgent(sessionId: session.id) != nil {
+                    Menu(l10n.startNewSessionWith) {
+                        ForEach(appState.availableCLIProviders, id: \.self) { provider in
+                            let label = provider == session.cliProviderType
+                                ? "\(provider.displayName) (\(l10n.currentLabel))"
+                                : provider.displayName
+                            Button(label) {
+                                activatePane()
+                                appState.duplicateSession(sessionId: session.id, provider: provider)
+                            }
+                        }
                     }
                 }
             }

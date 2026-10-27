@@ -31,6 +31,32 @@ class IMETerminalView: LocalProcessTerminalView {
     /// Called when "--resume" is detected in incoming process output.
     var onResumeLineDetected: (() -> Void)?
 
+    /// Called when the user ⌘-clicks a link or path in the terminal. Return true
+    /// when the app handled it; false falls back to opening it in the browser.
+    var onOpenLink: ((String) -> Bool)? {
+        didSet { installLinkRouterIfNeeded() }
+    }
+
+    /// `LocalProcessTerminalView` is its own `terminalDelegate` and takes
+    /// `requestOpenLink` from SwiftTerm's protocol-extension default, which a
+    /// subclass cannot override. A forwarding delegate sits in front instead;
+    /// `terminalDelegate` is weak, so the view keeps it alive here.
+    private var linkRouter: TerminalLinkRouter?
+
+    private func installLinkRouterIfNeeded() {
+        guard linkRouter == nil else { return }
+        let router = TerminalLinkRouter(target: self)
+        linkRouter = router
+        terminalDelegate = router
+    }
+
+    fileprivate func handleOpenLink(_ link: String) {
+        if onOpenLink?(link) == true { return }
+        if let url = URL(string: link), url.scheme != nil {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
     /// Image file extensions supported for drag & drop and paste.
     private static let imageExtensions: Set<String> = ["png", "jpg", "jpeg", "gif", "webp", "bmp", "tiff", "tif", "svg"]
 
@@ -468,5 +494,54 @@ class IMETerminalView: LocalProcessTerminalView {
 
         imeOverlay = tf
         return tf
+    }
+}
+
+
+/// Forwards every `TerminalViewDelegate` call to the terminal view except link
+/// activation, which goes to `IMETerminalView.handleOpenLink`.
+private final class TerminalLinkRouter: NSObject, TerminalViewDelegate {
+    private weak var target: IMETerminalView?
+
+    init(target: IMETerminalView) {
+        self.target = target
+    }
+
+    func sizeChanged(source: TerminalView, newCols: Int, newRows: Int) {
+        target?.sizeChanged(source: source, newCols: newCols, newRows: newRows)
+    }
+
+    func setTerminalTitle(source: TerminalView, title: String) {
+        target?.setTerminalTitle(source: source, title: title)
+    }
+
+    func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
+        target?.hostCurrentDirectoryUpdate(source: source, directory: directory)
+    }
+
+    func send(source: TerminalView, data: ArraySlice<UInt8>) {
+        target?.send(source: source, data: data)
+    }
+
+    func scrolled(source: TerminalView, position: Double) {
+        target?.scrolled(source: source, position: position)
+    }
+
+    func requestOpenLink(source: TerminalView, link: String, params: [String: String]) {
+        target?.handleOpenLink(link)
+    }
+
+    func bell(source: TerminalView) {
+        NSSound.beep()
+    }
+
+    func clipboardCopy(source: TerminalView, content: Data) {
+        target?.clipboardCopy(source: source, content: content)
+    }
+
+    func iTermContent(source: TerminalView, content: ArraySlice<UInt8>) {}
+
+    func rangeChanged(source: TerminalView, startY: Int, endY: Int) {
+        target?.rangeChanged(source: source, startY: startY, endY: endY)
     }
 }

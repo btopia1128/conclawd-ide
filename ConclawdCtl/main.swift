@@ -8,8 +8,9 @@ import Foundation
 
 let usage = """
 usage: conclawd split --title <title> (--prompt <text> | --prompt-file <path>) [--cwd <dir>] [--agent <name|path>]
-       conclawd open <path>
+       conclawd open [--beside] <path>
        conclawd add-project <dir>
+       conclawd preview-hook  (reads a Claude Code PostToolUse payload on stdin)
 
 split: Creates a new session tab in the running Conclawd app. The prompt is
 submitted to the new session automatically once it finishes starting. --cwd
@@ -20,14 +21,33 @@ agent instead (a name, looked up in <cwd>/.claude/agents/ then
 given, otherwise in the agent's own directory (its project root).
 
 open: Opens the file at <path> in the Conclawd editor pane. Relative paths are
-resolved against the current directory.
+resolved against the current directory. With --beside the file opens in the
+pane next to the calling session (splitting the window if needed) so the
+session's terminal stays visible.
 
 add-project: Registers <dir> as a Conclawd project so the agents in its
 .claude/agents/ appear in the Agents list. The current project selection is
 left unchanged. Relative paths are resolved against the current directory.
+
+preview-hook: Claude Code PostToolUse hook installed by Conclawd. When a tool
+writes a previewable file (image, video, audio, HTML), it shows that file in
+the pane beside the session. Never fails the hook: problems exit 0 silently.
 """
 
+/// Extensions `preview-hook` forwards to the app. Everything else (source
+/// code, Markdown, config) is ignored so ordinary edits never steal a pane.
+let previewableExtensions: Set<String> = [
+    "png", "jpg", "jpeg", "gif", "webp", "bmp", "tiff", "tif", "svg", "heic", "heif",
+    "mp4", "mov", "m4v", "webm",
+    "wav", "mp3", "m4a", "aac", "flac", "ogg",
+    "html", "htm",
+]
+
+/// `preview-hook` must never surface as a hook error inside the session.
+nonisolated(unsafe) var silentFailures = false
+
 func fail(_ message: String) -> Never {
+    if silentFailures { exit(0) }
     FileHandle.standardError.write(Data("conclawd: \(message)\n".utf8))
     exit(1)
 }
@@ -44,6 +64,7 @@ var prompt: String?
 var cwd: String?
 var openPath: String?
 var agent: String?
+var beside = false
 
 switch command {
 case "split":
@@ -87,6 +108,10 @@ case "split":
         fail("a non-empty prompt is required (--prompt or --prompt-file)")
     }
 case "open":
+    if let flagIndex = arguments.firstIndex(of: "--beside") {
+        beside = true
+        arguments.remove(at: flagIndex)
+    }
     guard arguments.count == 1, let rawPath = arguments.first, !rawPath.isEmpty else {
         fail("open takes exactly one file path\n\(usage)")
     }
@@ -105,12 +130,25 @@ case "add-project":
         exit(0)
     }
     openPath = URL(fileURLWithPath: rawPath).standardizedFileURL.path
+case "preview-hook":
+    silentFailures = true
+    let input = FileHandle.standardInput.readDataToEndOfFile()
+    guard let payload = try? JSONSerialization.jsonObject(with: input) as? [String: Any],
+          let toolInput = payload["tool_input"] as? [String: Any],
+          let rawPath = (toolInput["file_path"] as? String) ?? (toolInput["notebook_path"] as? String),
+          !rawPath.isEmpty else { exit(0) }
+    let base = (payload["cwd"] as? String) ?? FileManager.default.currentDirectoryPath
+    let url = rawPath.hasPrefix("/")
+        ? URL(fileURLWithPath: rawPath)
+        : URL(fileURLWithPath: base).appendingPathComponent(rawPath)
+    guard previewableExtensions.contains(url.pathExtension.lowercased()) else { exit(0) }
+    openPath = url.standardizedFileURL.path
 default:
     fail("unknown command '\(command)'\n\(usage)")
 }
 
 let request = SessionControlRequest(
-    command: command,
+    command: command == "preview-hook" ? "preview" : command,
     title: title,
     prompt: prompt,
     // With --agent, an implicit cwd is left to the agent's own directory.
@@ -119,9 +157,10 @@ let request = SessionControlRequest(
             ?? (agent == nil ? FileManager.default.currentDirectoryPath : nil))
         : nil,
     path: openPath,
-    sourceSessionId: command == "split" ? ProcessInfo.processInfo.environment["CONCLAWD_SESSION_ID"] : nil,
+    sourceSessionId: (command == "split" || command == "preview-hook" || beside) ? ProcessInfo.processInfo.environment["CONCLAWD_SESSION_ID"] : nil,
     agent: agent,
-    callerDirectory: agent == nil ? nil : FileManager.default.currentDirectoryPath
+    callerDirectory: agent == nil ? nil : FileManager.default.currentDirectoryPath,
+    beside: beside ? true : nil
 )
 
 let socketPath = ProcessInfo.processInfo.environment["CONCLAWD_SOCKET"]
@@ -154,7 +193,8 @@ guard connected == 0 else {
 
 var one: Int32 = 1
 setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
-var timeout = timeval(tv_sec: 15, tv_usec: 0)
+// The hook blocks the session until it returns, so keep it short.
+var timeout = timeval(tv_sec: command == "preview-hook" ? 3 : 15, tv_usec: 0)
 setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
 
 let sent = payload.withUnsafeBytes { raw -> Bool in
@@ -188,8 +228,12 @@ guard let response = try? JSONDecoder().decode(SessionControlResponse.self, from
 
 if response.ok {
     switch command {
+    case "preview-hook":
+        break
     case "open":
-        print("Opened \(openPath ?? "the file") in the Conclawd editor.")
+        print(beside
+            ? "Opened \(openPath ?? "the file") in the Conclawd pane beside this session."
+            : "Opened \(openPath ?? "the file") in the Conclawd editor.")
     case "add-project":
         if response.alreadyRegistered == true {
             print("\(openPath ?? "The directory") is already a Conclawd project.")

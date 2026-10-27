@@ -10,8 +10,12 @@ enum SessionControlProtocol {
     /// Default Unix domain socket path. The app listens here; the CLI reads
     /// `$CONCLAWD_SOCKET` first so a session always talks to the app that
     /// spawned it even if the default ever changes.
+    /// The dev build (`com.conclawd.app.dev`) uses its own socket so running it
+    /// next to the Release app does not steal (or unlink) the Release socket.
     static var defaultSocketPath: String {
-        NSHomeDirectory() + "/Library/Application Support/Conclawd/conclawd.sock"
+        let isDevBuild = Bundle.main.bundleIdentifier?.hasSuffix(".dev") ?? false
+        let name = isDevBuild ? "conclawd-dev.sock" : "conclawd.sock"
+        return NSHomeDirectory() + "/Library/Application Support/Conclawd/" + name
     }
 }
 
@@ -32,6 +36,9 @@ struct SessionControlRequest: Codable, Sendable {
     /// neither `--cwd` nor the agent provides one. (`cwd` is only sent when
     /// `--cwd` was given, so a project agent starts in its own project root.)
     var callerDirectory: String?
+    /// `open --beside`: open in the pane next to `sourceSessionId`'s session
+    /// (splitting the window if needed) instead of the active pane.
+    var beside: Bool? = nil
 }
 
 /// Error reported back to the CLI as the response's `error` text.

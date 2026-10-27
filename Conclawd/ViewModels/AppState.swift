@@ -2328,7 +2328,7 @@ final class AppState {
     /// Toggle source/preview view mode on a Markdown file.
     func toggleFileViewMode(fileId: UUID) {
         guard let index = openFiles.firstIndex(where: { $0.id == fileId }),
-              openFiles[index].isMarkdown else { return }
+              openFiles[index].hasPreviewMode else { return }
         openFiles[index].viewMode = openFiles[index].viewMode == .source ? .preview : .source
     }
 
@@ -2337,7 +2337,7 @@ final class AppState {
     func toggleMarkdownPreviewInActivePane() -> Bool {
         guard let fileId = activePane.selectedFileId,
               let file = openFiles.first(where: { $0.id == fileId }),
-              file.isMarkdown else { return false }
+              file.hasPreviewMode else { return false }
         toggleFileViewMode(fileId: fileId)
         return true
     }
@@ -3180,28 +3180,45 @@ final class AppState {
         centerPane = .terminal
     }
 
-    func duplicateSession(sessionId: UUID) {
+    /// The agent behind an agent-launched CLI session, when that session can be
+    /// started again with a different CLI provider. Nil for standalone, shell,
+    /// creation and manual (rawCommand) sessions.
+    func providerSwitchableAgent(sessionId: UUID) -> Agent? {
+        guard let session = activeSessions.first(where: { $0.id == sessionId }),
+              session.agentId != session.id,
+              !session.isShellSession,
+              !session.isCreationSession,
+              session.displayMode == .terminal,
+              let agent = agents.first(where: { $0.id == session.agentId })
+                ?? agents.first(where: { $0.filePath?.path(percentEncoded: false) == session.agentFilePath }),
+              agent.rawCommand?.isEmpty ?? true
+        else { return nil }
+        return agent
+    }
+
+    func duplicateSession(sessionId: UUID, provider: CLIProviderType? = nil) {
         guard let session = activeSessions.first(where: { $0.id == sessionId }) else { return }
+        let provider = provider ?? session.cliProviderType
 
         // Standalone session (agentId == id means no real agent)
         if session.agentId == session.id {
             startStandaloneSession(
                 name: session.agentName,
                 workingDirectory: session.workingDirectory,
-                provider: session.cliProviderType
+                provider: provider
             )
             return
         }
 
         if let agent = agents.first(where: { $0.id == session.agentId })
                 ?? agents.first(where: { $0.filePath?.path(percentEncoded: false) == session.agentFilePath }) {
-            startAgent(agent, provider: session.cliProviderType)
+            startAgent(agent, provider: provider)
         } else {
             // Agent not found (e.g. different project selected) — duplicate as standalone
             startStandaloneSession(
                 name: session.agentName,
                 workingDirectory: session.workingDirectory,
-                provider: session.cliProviderType
+                provider: provider
             )
         }
     }
@@ -4004,6 +4021,9 @@ final class AppState {
 
         // Wire idle detection → prompt delivery (scheduled sessions and
         // split-session handoffs share the same first-idle trigger)
+        processManager.onOpenLinkRequested = { [weak self] sessionId, link in
+            self?.openTerminalLink(link, sessionId: sessionId) ?? false
+        }
         processManager.onStatusChanged = { [weak self] sessionId, status in
             if status == .waitingForInput {
                 self?.scheduleManager.handleSessionBecameIdle(sessionId: sessionId)
@@ -4038,6 +4058,8 @@ final class AppState {
             return handleSessionSplitRequest(request)
         case "open":
             return handleOpenFileRequest(request)
+        case "preview":
+            return handlePreviewRequest(request)
         case "add-project":
             return handleAddProjectRequest(request)
         default:
@@ -4058,13 +4080,127 @@ final class AppState {
             return SessionControlResponse(ok: false, sessionId: nil, error: "path is a directory, not a file: \(path)")
         }
         let url = URL(fileURLWithPath: path)
-        openFile(url: url)
-        // openFile silently declines files it cannot display (e.g. binary data
+        if request.beside == true {
+            let sessionId = request.sourceSessionId.flatMap(UUID.init(uuidString:))
+            openFileBesideSession(url: url, sessionId: sessionId)
+        } else {
+            openFile(url: url)
+        }
+        // Both open paths silently decline files it cannot display (e.g. binary data
         // that is neither UTF-8 text nor a previewable image/video).
         guard openFiles.contains(where: { $0.url == url }) else {
             return SessionControlResponse(ok: false, sessionId: nil, error: "cannot display this file (not UTF-8 text or previewable media): \(path)")
         }
         return SessionControlResponse(ok: true, sessionId: nil, error: nil)
+    }
+
+    /// Handles a `conclawd preview-hook` request (a Write/Edit just produced a
+    /// previewable file): shows it in the pane beside the session that wrote it.
+    private func handlePreviewRequest(_ request: SessionControlRequest) -> SessionControlResponse {
+        guard let path = request.path, !path.isEmpty,
+              FileManager.default.fileExists(atPath: path) else {
+            return SessionControlResponse(ok: false, sessionId: nil, error: "file not found")
+        }
+        let sessionId = request.sourceSessionId.flatMap(UUID.init(uuidString:))
+        openFileBesideSession(url: URL(fileURLWithPath: path), sessionId: sessionId)
+        return SessionControlResponse(ok: true, sessionId: nil, error: nil)
+    }
+
+    /// Handles a ⌘-click on a link in a session's terminal. Local paths (absolute,
+    /// `~/`, relative to the session's directory, or `file:` URLs) that exist open
+    /// beside the session; anything else returns false so the caller can hand it
+    /// to the default browser.
+    func openTerminalLink(_ link: String, sessionId: UUID) -> Bool {
+        var text = link.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.lowercased().hasPrefix("file:") {
+            guard let url = URL(string: text), url.isFileURL else { return false }
+            text = url.path(percentEncoded: false)
+        } else if text.contains("://") || text.lowercased().hasPrefix("mailto:") {
+            return false
+        }
+        // Drop a trailing ":line[:col]" (compiler / agent style) unless the
+        // name really ends that way on disk.
+        if let range = text.range(of: #":\d+(:\d+)?$"#, options: .regularExpression),
+           resolveLocalPath(text, sessionId: sessionId) == nil {
+            text = String(text[..<range.lowerBound])
+        }
+        guard let path = resolveLocalPath(text, sessionId: sessionId) else { return false }
+        var isDirectory: ObjCBool = false
+        FileManager.default.fileExists(atPath: path, isDirectory: &isDirectory)
+        if isDirectory.boolValue {
+            NSWorkspace.shared.open(URL(fileURLWithPath: path, isDirectory: true))
+            return true
+        }
+        openFileBesideSession(url: URL(fileURLWithPath: path), sessionId: sessionId)
+        return true
+    }
+
+    /// Absolute path for a terminal link if it names an existing file or folder.
+    private func resolveLocalPath(_ text: String, sessionId: UUID) -> String? {
+        var path = (text as NSString).expandingTildeInPath
+        if !path.hasPrefix("/") {
+            guard let cwd = activeSessions.first(where: { $0.id == sessionId })?.workingDirectory else { return nil }
+            path = cwd.appendingPathComponent(path).standardizedFileURL.path
+        }
+        return FileManager.default.fileExists(atPath: path) ? path : nil
+    }
+
+    /// Opens a file in the pane next to the given session so its terminal stays
+    /// visible: opens the split when there is only one pane, keeps keyboard focus
+    /// on the session's pane, re-creates media tabs so a rewritten image or video
+    /// shows its new contents, and starts HTML in rendered preview mode.
+    func openFileBesideSession(url: URL, sessionId: UUID?) {
+        let sourcePane = sessionId.flatMap { paneOwning(sessionId: $0) } ?? activePaneId
+        let kind = FileKind.from(extension: url.pathExtension)
+
+        if secondaryPane == nil {
+            var newPane = PaneState(id: .secondary)
+            newPane.centerPane = .fileEditor
+            secondaryPane = newPane
+        }
+        let targetPane: PaneID = sourcePane == .primary ? .secondary : .primary
+
+        if let existing = openFiles.first(where: { $0.url == url }) {
+            if existing.kind == .text {
+                if existing.paneId != targetPane {
+                    moveOpenFile(fileId: existing.id, toPane: targetPane)
+                }
+                if let index = openFiles.firstIndex(where: { $0.id == existing.id }),
+                   openFiles[index].isHTML, !openFiles[index].hasChanges {
+                    openFiles[index].viewMode = .preview
+                }
+                updatePane(targetPane) {
+                    $0.selectedFileId = existing.id
+                    $0.centerPane = .fileEditor
+                }
+                activePaneId = sourcePane
+                return
+            }
+            // Media views load once per tab; replace the tab to show new contents.
+            openFileWatcher.unwatch(id: existing.id)
+            openFiles.removeAll { $0.id == existing.id }
+        }
+
+        let content: String
+        if kind == .text {
+            guard let data = try? Data(contentsOf: url),
+                  let text = String(data: data, encoding: .utf8) else { return }
+            content = text
+        } else {
+            content = ""
+        }
+        var file = OpenFile(url: url, kind: kind, content: content)
+        file.paneId = targetPane
+        if file.isHTML { file.viewMode = .preview }
+        openFiles.append(file)
+        if kind == .text {
+            openFileWatcher.watch(id: file.id, url: url)
+        }
+        updatePane(targetPane) {
+            $0.selectedFileId = file.id
+            $0.centerPane = .fileEditor
+        }
+        activePaneId = sourcePane
     }
 
     /// Handles a `conclawd add-project` request: registers the directory as a

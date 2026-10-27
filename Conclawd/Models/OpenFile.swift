@@ -77,6 +77,17 @@ struct OpenFile: Identifiable, Equatable {
         }
     }
 
+    /// Whether this file is an HTML page that can be rendered in a web view.
+    var isHTML: Bool {
+        switch fileExtension.lowercased() {
+        case "html", "htm": return true
+        default: return false
+        }
+    }
+
+    /// Whether this text file has a rendered preview mode (Markdown or HTML).
+    var hasPreviewMode: Bool { isMarkdown || isHTML }
+
     /// Relative path from the project root (for breadcrumb display).
     func relativePath(from projectRoot: URL) -> String {
         let filePath = url.path(percentEncoded: false)

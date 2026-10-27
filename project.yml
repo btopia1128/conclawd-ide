@@ -63,6 +63,12 @@ targets:
       configs:
         Debug:
           ASSETCATALOG_COMPILER_APPICON_NAME: AppIconDev
+          # Separate identity for dev builds. Rebuilding a running app's bundle
+          # breaks its code-signature check, so TCC (Accessibility etc.) denies
+          # the running instance. Daily use stays on the Release app
+          # (com.conclawd.app) and dev builds no longer overwrite it.
+          PRODUCT_BUNDLE_IDENTIFIER: com.conclawd.app.dev
+          INFOPLIST_KEY_CFBundleDisplayName: Conclawd Dev
         Release:
           ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     dependencies:

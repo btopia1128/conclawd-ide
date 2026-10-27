@@ -412,6 +412,7 @@ private struct TerminalSettingsSection: View {
     @AppStorage("terminalFontSize") private var terminalFontSize: Double = 13
     @AppStorage("terminalCursorStyle") private var cursorStyle: String = TerminalCursorStyleSetting.block.rawValue
     @AppStorage("terminalColorScheme") private var termColorScheme: String = TerminalColorScheme.default.rawValue
+    @AppStorage(AgentProcessManager.autoPreviewDefaultsKey) private var autoPreviewEnabled: Bool = true
 
     var body: some View {
         @Bindable var state = appState
@@ -431,6 +432,12 @@ private struct TerminalSettingsSection: View {
                     Toggle("", isOn: $state.editorWordWrap)
                         .labelsHidden()
                 }
+
+                SettingsRow(l10n.autoPreviewWrittenFiles) {
+                    Toggle("", isOn: $autoPreviewEnabled)
+                        .labelsHidden()
+                }
+                .help(l10n.autoPreviewWrittenFilesHelp)
             }
 
             SettingsGroup(l10n.font) {

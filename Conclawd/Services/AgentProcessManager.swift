@@ -56,6 +56,10 @@ final class AgentProcessManager {
     /// Callback when a session's status changes. (sessionId, newStatus)
     var onStatusChanged: ((UUID, AgentProcessStatus) -> Void)?
 
+    /// ⌘-click on a link in a session's terminal. Return true when handled
+    /// (e.g. a local file opened beside the session); false opens the browser.
+    var onOpenLinkRequested: ((UUID, String) -> Bool)?
+
     // MARK: - Creation Session
 
     /// Starts a creation session and returns the session ID.
@@ -213,6 +217,9 @@ final class AgentProcessManager {
         // System prompt via env var
         var env = buildEnvironment()
         env.append("CONCLAWD_SESSION_ID=\(sessionId.uuidString)")
+        if provider == .claude {
+            appendClaudePreviewHook(args: &args, env: &env)
+        }
         if let systemPrompt, !systemPrompt.isEmpty {
             switch provider {
             case .claude:
@@ -1270,6 +1277,11 @@ final class AgentProcessManager {
                 self?.tryExtractResumeId(sessionId: sessionId)
             }
         }
+        terminalView.onOpenLink = { [weak self] link in
+            MainActor.assumeIsolated {
+                self?.onOpenLinkRequested?(sessionId, link) ?? false
+            }
+        }
 
         return terminalView
     }
@@ -1364,11 +1376,43 @@ final class AgentProcessManager {
         return args
     }
 
+    /// UserDefaults key for showing written images / videos / HTML beside the session.
+    static let autoPreviewDefaultsKey = "autoPreviewWrittenFiles"
+
+    static var isAutoPreviewEnabled: Bool {
+        UserDefaults.standard.object(forKey: autoPreviewDefaultsKey) as? Bool ?? true
+    }
+
+    /// Adds a session-scoped PostToolUse hook (via `--settings`, merged with the
+    /// user's own hooks rather than written into ~/.claude/settings.json) that
+    /// runs `conclawd preview-hook` after Write/Edit. The helper forwards only
+    /// previewable media and HTML, so ordinary code edits are untouched.
+    private func appendClaudePreviewHook(args: inout [String], env: inout [String]) {
+        guard Self.sessionControlCLIPath != nil, Self.isAutoPreviewEnabled else { return }
+        let settings: [String: Any] = [
+            "hooks": [
+                "PostToolUse": [[
+                    "matcher": "Write|Edit|MultiEdit",
+                    "hooks": [[
+                        "type": "command",
+                        "command": "\"$CONCLAWD_CLI\" preview-hook",
+                        "timeout": 5,
+                    ]],
+                ]],
+            ],
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: settings),
+              let json = String(data: data, encoding: .utf8) else { return }
+        env.append("_CONCLAWD_SETTINGS=\(json)")
+        args += ["--settings", "$_CONCLAWD_SETTINGS"]
+    }
+
     /// Appends `--append-system-prompt` carrying the Conclawd integration
     /// instructions (when the helper CLI is bundled) plus any extra context.
     /// The payload travels through an environment variable so it never hits
     /// the command line.
     private func appendClaudeSystemPrompt(memoryContext: String?, args: inout [String], env: inout [String]) {
+        appendClaudePreviewHook(args: &args, env: &env)
         guard let prompt = SessionControlPrompt.combined(
             with: memoryContext, cliAvailable: Self.sessionControlCLIPath != nil) else { return }
         env.append("_AGENT_TERMINAL_APPEND_PROMPT=\(prompt)")

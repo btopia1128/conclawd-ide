@@ -96,6 +96,7 @@
 		9D8AB53E5B88E64CC117F3E4 /* ShellPresetService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D19C06DEE53A801C63E3A8F /* ShellPresetService.swift */; };
 		9EA78B8F3B30180FD9CCB633 /* MultilingualE5Small.mlmodelc in Resources */ = {isa = PBXBuildFile; fileRef = AF1732433A24A053A9479E98 /* MultilingualE5Small.mlmodelc */; };
 		A11C74A80B7346EBD18FC4E3 /* AgentInspectorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B487025D1EA196C9D843B69 /* AgentInspectorView.swift */; };
+		A18B08EB3BB307DE14C9F9D3 /* HTMLPreviewView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF4DBC4B2102B5FD428E5496 /* HTMLPreviewView.swift */; };
 		A376B076B9DEFDD47C9251F3 /* TerminalNSViewRepresentable.swift in Sources */ = {isa = PBXBuildFile; fileRef = E69C7A8C53CE26E4F3A36124 /* TerminalNSViewRepresentable.swift */; };
 		A646E282A3C9198FC923B178 /* PreTokenizer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB895C57A8997B5331E6FC6D /* PreTokenizer.swift */; };
 		A6833A630BC9A705ED5C1525 /* Trie.swift in Sources */ = {isa = PBXBuildFile; fileRef = D9AB6AFB1662B6EBA55199EE /* Trie.swift */; };
@@ -279,6 +280,7 @@
 		B87D3587C86697BD2B87165E /* AgentEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentEditorView.swift; sourceTree = "<group>"; };
 		B93952319F640D91173FFC7E /* TerminalTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalTabView.swift; sourceTree = "<group>"; };
 		BD8E7BAB01E98C01D87673EE /* SessionControlProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionControlProtocol.swift; sourceTree = "<group>"; };
+		BF4DBC4B2102B5FD428E5496 /* HTMLPreviewView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HTMLPreviewView.swift; sourceTree = "<group>"; };
 		C029204415C1A046EB7728D5 /* CloudTriggerService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CloudTriggerService.swift; sourceTree = "<group>"; };
 		C1709DFB3698E5537BE5654F /* Decoder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Decoder.swift; sourceTree = "<group>"; };
 		C33D0C9BCDFF32098DBECD3F /* EdgeShape.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EdgeShape.swift; sourceTree = "<group>"; };
@@ -599,6 +601,7 @@
 			isa = PBXGroup;
 			children = (
 				CAE713E9D964C742C04F0EA9 /* FileEditorView.swift */,
+				BF4DBC4B2102B5FD428E5496 /* HTMLPreviewView.swift */,
 				1148E6BC66DB26C046E73B16 /* LineNumberRulerView.swift */,
 				74873D962B6B8F28E08BE20B /* MarkdownPreviewView.swift */,
 				158D31CE46B05791FA2349E4 /* MediaPreviewView.swift */,
@@ -946,6 +949,7 @@
 				CB63163E38DE09E507809C42 /* GitActionsView.swift in Sources */,
 				D832F9A2433F642B780A0DEA /* GitBranch.swift in Sources */,
 				E7D821DB89164747210E975A /* GitService.swift in Sources */,
+				A18B08EB3BB307DE14C9F9D3 /* HTMLPreviewView.swift in Sources */,
 				E1B481207B9E61B1DA99E4A5 /* HoverTrackingView.swift in Sources */,
 				77AEBB9E487497DD826B88FE /* Hub.swift in Sources */,
 				46535F58B7357B3FDFB1E057 /* HubApi.swift in Sources */,
@@ -1094,7 +1098,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_APP_SANDBOX = NO;
 				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_CFBundleDisplayName = Conclawd;
+				INFOPLIST_KEY_CFBundleDisplayName = "Conclawd Dev";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -1102,7 +1106,7 @@
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 0.3.1;
-				PRODUCT_BUNDLE_IDENTIFIER = com.conclawd.app;
+				PRODUCT_BUNDLE_IDENTIFIER = com.conclawd.app.dev;
 				PRODUCT_NAME = Conclawd;
 				SDKROOT = macosx;
 				SWIFT_VERSION = 6.0;

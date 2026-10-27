@@ -29,7 +29,7 @@ struct FileEditorView: View {
                     // registering it here as well made the two compete, so the
                     // shortcut either fired against a stale view or just beeped.
                     .overlay {
-                        if file.isMarkdown {
+                        if file.hasPreviewMode {
                             Button("") { appState.toggleFileViewMode(fileId: file.id) }
                                 .keyboardShortcut("v", modifiers: [.command, .option])
                                 .frame(width: 0, height: 0)
@@ -74,6 +74,19 @@ struct FileEditorView: View {
                 .opacity(showPreview ? 1 : 0)
                 .allowsHitTesting(showPreview)
             }
+        } else if file.isHTML {
+            let showPreview = file.viewMode == .preview
+            ZStack {
+                FileTextEditor(file: file, paneId: paneId)
+                    .id(file.id)
+                    .opacity(showPreview ? 0 : 1)
+                    .allowsHitTesting(!showPreview)
+                if showPreview {
+                    HTMLPreviewView(fileURL: file.url, content: file.content)
+                        .id(file.id)
+                        .background(Color.appSurface)
+                }
+            }
         } else {
             FileTextEditor(file: file, paneId: paneId)
                 .id(file.id)
@@ -97,8 +110,8 @@ struct FileEditorView: View {
 
             Spacer()
 
-            // Markdown preview toggle (only for .md/.markdown files)
-            if file.isMarkdown {
+            // Preview toggle (Markdown and HTML files)
+            if file.hasPreviewMode {
                 Button {
                     appState.toggleFileViewMode(fileId: file.id)
                 } label: {
@@ -113,7 +126,7 @@ struct FileEditorView: View {
 
             // Word wrap / line number toggles — kept in layout (invisible in preview) so the
             // preview toggle button stays in the same horizontal position across modes.
-            let isPreview = file.isMarkdown && file.viewMode == .preview
+            let isPreview = file.hasPreviewMode && file.viewMode == .preview
             Button {
                 appState.editorWordWrap.toggle()
             } label: {

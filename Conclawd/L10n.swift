@@ -200,6 +200,13 @@ struct L10n {
     var stop: String { s("Stop", "停止") }
     var resume: String { s("Resume", "再開") }
     var fork: String { s("Fork", "分岐") }
+    var startNewSessionWith: String { s("New Session With", "新しいセッションを起動") }
+    var autoPreviewWrittenFiles: String { s("Preview Written Images & HTML", "書き出した画像・HTMLを横に表示") }
+    var autoPreviewWrittenFilesHelp: String {
+        s("When Claude writes an image, video, audio or HTML file, show it in the pane beside the session. Applies to sessions started after the change.",
+          "Claude が画像・動画・音声・HTML を書き出したら、セッションの隣の欄に表示します。変更後に起動したセッションから有効です。")
+    }
+    var currentLabel: String { s("current", "現在") }
     var done: String { s("Done", "完了") }
     var add: String { s("Add", "追加") }
 

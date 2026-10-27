@@ -22,6 +22,14 @@ enum SessionControlPrompt {
 
     Relative paths resolve against the current directory; prefer absolute paths. If it is ambiguous which file is meant, ask. Text files must be UTF-8; images and videos open as previews.
 
+    When the user wants the file shown side by side with this session — split view, next to the terminal, without hiding the chat (e.g. "分割画面で表示して", "横に出して", "ターミナルの隣で開いて", "show it side by side") — add `--beside`:
+
+    ```bash
+    "$CONCLAWD_CLI" open --beside "<path>"
+    ```
+
+    It opens the file in the pane next to this session, splitting the window if there is only one pane, and keeps this session's terminal visible. HTML files open as a rendered page (the user can switch to source with the eye button).
+
     ## Split a topic into a new session tab
 
     When the user asks to continue a topic in a separate session or split the conversation (e.g. "この件は別セッションで進めて", "セッション分けて", "split this into a new session"):

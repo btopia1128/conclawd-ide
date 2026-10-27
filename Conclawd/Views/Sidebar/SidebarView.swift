@@ -957,6 +957,17 @@ struct SidebarView: View {
             Button(l10n.duplicate + "  \u{2318}D") { appState.duplicateSession(sessionId: session.id) }
         }
 
+        if appState.providerSwitchableAgent(sessionId: session.id) != nil {
+            Menu(l10n.startNewSessionWith) {
+                ForEach(appState.availableCLIProviders, id: \.self) { provider in
+                    let label = provider == session.cliProviderType
+                        ? "\(provider.displayName) (\(l10n.currentLabel))"
+                        : provider.displayName
+                    Button(label) { appState.duplicateSession(sessionId: session.id, provider: provider) }
+                }
+            }
+        }
+
         // "Save as Preset" for standalone sessions (not agent-backed)
         if !session.isShellSession && session.agentId == session.id {
             Button(l10n.saveAsPreset) {

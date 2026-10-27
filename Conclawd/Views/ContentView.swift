@@ -320,39 +320,85 @@ private struct PaneDivider: View {
     let usableWidth: CGFloat
     @Binding var committedFraction: Double
     @Binding var liveFraction: Double?
-    @State private var dragStartFraction: Double?
 
     var body: some View {
-        Rectangle()
-            .fill(Color.gray.opacity(0.001))
-            .frame(width: 6)
-            .overlay(Divider())
-            .contentShape(Rectangle())
-            .onHover { hovering in
-                if hovering {
-                    NSCursor.resizeLeftRight.push()
-                } else {
-                    NSCursor.pop()
+        PaneDividerHandle(
+            onChanged: { deltaX, startFraction in
+                let newFraction = startFraction + Double(deltaX / max(1, usableWidth))
+                let clamped = max(0.15, min(0.85, newFraction))
+                // Skip sub-pixel changes so the panes (and the terminals inside,
+                // which reflow on every width change) only relayout when the
+                // divider actually moves a pixel.
+                if let current = liveFraction,
+                   abs((clamped - current) * Double(usableWidth)) < 1 { return }
+                liveFraction = clamped
+            },
+            onEnded: {
+                if let final = liveFraction {
+                    committedFraction = final
                 }
-            }
-            .gesture(
-                DragGesture(minimumDistance: 0)
-                    .onChanged { value in
-                        if dragStartFraction == nil {
-                            dragStartFraction = committedFraction
-                        }
-                        let delta = value.translation.width / max(1, usableWidth)
-                        let newFraction = (dragStartFraction ?? committedFraction) + Double(delta)
-                        liveFraction = max(0.15, min(0.85, newFraction))
-                    }
-                    .onEnded { _ in
-                        if let final = liveFraction {
-                            committedFraction = final
-                        }
-                        liveFraction = nil
-                        dragStartFraction = nil
-                    }
-            )
+                liveFraction = nil
+            },
+            currentFraction: { liveFraction ?? committedFraction }
+        )
+        .frame(width: 6)
+        .overlay(Divider().allowsHitTesting(false))
+    }
+}
+
+/// AppKit drag handle for the split divider.
+///
+/// A SwiftUI `DragGesture` on the divider caused two problems:
+/// - Its default `.local` translation is measured against the divider itself,
+///   which moves while dragging, so the fraction oscillated frame to frame
+///   (the panes flickered).
+/// - The window has `isMovableByWindowBackground`, and the nearly transparent
+///   divider counted as background, so dragging it moved the whole window
+///   whenever the window was not maximized.
+/// Tracking `locationInWindow` in an NSView that refuses window drags fixes both.
+private struct PaneDividerHandle: NSViewRepresentable {
+    var onChanged: (_ deltaX: CGFloat, _ startFraction: Double) -> Void
+    var onEnded: () -> Void
+    var currentFraction: () -> Double
+
+    func makeNSView(context: Context) -> HandleView {
+        let view = HandleView()
+        view.handle = self
+        return view
+    }
+
+    func updateNSView(_ view: HandleView, context: Context) {
+        view.handle = self
+    }
+
+    final class HandleView: NSView {
+        var handle: PaneDividerHandle?
+        private var dragStartX: CGFloat?
+        private var dragStartFraction: Double = 0.5
+
+        override var mouseDownCanMoveWindow: Bool { false }
+
+        override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+        override func resetCursorRects() {
+            addCursorRect(bounds, cursor: .resizeLeftRight)
+        }
+
+        override func mouseDown(with event: NSEvent) {
+            dragStartX = event.locationInWindow.x
+            dragStartFraction = handle?.currentFraction() ?? 0.5
+        }
+
+        override func mouseDragged(with event: NSEvent) {
+            guard let dragStartX else { return }
+            handle?.onChanged(event.locationInWindow.x - dragStartX, dragStartFraction)
+        }
+
+        override func mouseUp(with event: NSEvent) {
+            guard dragStartX != nil else { return }
+            dragStartX = nil
+            handle?.onEnded()
+        }
     }
 }
 
