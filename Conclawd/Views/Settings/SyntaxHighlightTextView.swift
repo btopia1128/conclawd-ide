@@ -62,6 +62,17 @@ struct SyntaxHighlightTextView: NSViewRepresentable {
     /// stops re-highlighting in the background.
     private var isHighlightingEnabled: Bool { Self.isHighlightable(text) }
 
+    /// Highlightr's initializer is failable (its JSContext, bundled highlight.js or
+    /// theme can fail to load). It used to be force-unwrapped, which crashed the
+    /// whole app when opening a file; now the editor falls back to plain text.
+    private static func makeHighlightr() -> Highlightr? {
+        guard let highlightr = Highlightr() else {
+            print("[SyntaxHighlightTextView] Highlightr() returned nil; showing plain text")
+            return nil
+        }
+        return highlightr
+    }
+
     /// The language actually handed to Highlightr. Nil both for genuinely unknown file
     /// types (where Highlightr auto-detects) and for oversized documents — the call
     /// sites gate on `isHighlightingEnabled` so the oversized case skips highlighting
@@ -74,7 +85,7 @@ struct SyntaxHighlightTextView: NSViewRepresentable {
     /// Resolves the editor background so it matches the unified app surface
     /// in Claude/Light modes. Dark mode keeps the Highlightr theme bg so the
     /// syntax colors stay legible on the theme they were designed for.
-    private static func editorBackgroundColor(for textView: NSView, highlightr: Highlightr) -> NSColor {
+    private static func editorBackgroundColor(for textView: NSView, highlightr: Highlightr?) -> NSColor {
         if NSColor.isClaudeTheme {
             return NSColor(srgbRed: 0.961, green: 0.937, blue: 0.902, alpha: 1.0) // #F5EFE6
         }
@@ -82,7 +93,7 @@ struct SyntaxHighlightTextView: NSViewRepresentable {
         if !isDark {
             return NSColor(srgbRed: 0.961, green: 0.969, blue: 0.980, alpha: 1.0) // #F5F7FA
         }
-        return highlightr.theme.themeBackgroundColor ?? .textBackgroundColor
+        return highlightr?.theme.themeBackgroundColor ?? .textBackgroundColor
     }
 
     func makeCoordinator() -> Coordinator {
@@ -90,8 +101,8 @@ struct SyntaxHighlightTextView: NSViewRepresentable {
     }
 
     func makeNSView(context: Context) -> NSScrollView {
-        let highlightr = Highlightr()!
-        applyTheme(highlightr)
+        let highlightr = Self.makeHighlightr()
+        if let highlightr { applyTheme(highlightr) }
 
         // Oversized documents get a plain NSTextStorage rather than Highlightr's
         // CodeAttributedString. Disabling highlighting alone is not enough: every
@@ -100,8 +111,8 @@ struct SyntaxHighlightTextView: NSViewRepresentable {
         // whole NSString to a Swift String and back. On an 11MB document AppKit
         // makes that call thousands of times per layout pass, which is what pegged
         // the main thread even with highlighting off.
-        let codeStorage: CodeAttributedString? = isHighlightingEnabled
-            ? CodeAttributedString(highlightr: highlightr)
+        let codeStorage: CodeAttributedString? = (isHighlightingEnabled && highlightr != nil)
+            ? CodeAttributedString(highlightr: highlightr!)
             : nil
         let textStorage: NSTextStorage = codeStorage ?? NSTextStorage()
         codeStorage?.highlightDelegate = context.coordinator
@@ -165,7 +176,7 @@ struct SyntaxHighlightTextView: NSViewRepresentable {
         scrollView.autohidesScrollers = true
 
         // Pre-highlight (skipped entirely for oversized documents)
-        if isHighlightingEnabled, let highlighted = highlightr.highlight(text, as: language) {
+        if isHighlightingEnabled, let highlighted = highlightr?.highlight(text, as: language) {
             textStorage.beginEditing()
             textStorage.setAttributedString(highlighted)
             textStorage.endEditing()
@@ -187,8 +198,8 @@ struct SyntaxHighlightTextView: NSViewRepresentable {
     }
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
-        guard let textView = context.coordinator.textView as? LineNumberTextView,
-              let highlightr = context.coordinator.highlightr else { return }
+        guard let textView = context.coordinator.textView as? LineNumberTextView else { return }
+        let highlightr = context.coordinator.highlightr
 
         context.coordinator.parent = self
         textView.onMouseDown = onMouseDown
@@ -200,7 +211,7 @@ struct SyntaxHighlightTextView: NSViewRepresentable {
         let isClaude = NSColor.isClaudeTheme
         let themeKey = "\(expectedTheme)-\(isClaude)"
         if context.coordinator.currentTheme != themeKey {
-            highlightr.setTheme(to: expectedTheme)
+            highlightr?.setTheme(to: expectedTheme)
             textView.backgroundColor = Self.editorBackgroundColor(for: textView, highlightr: highlightr)
             context.coordinator.currentTheme = themeKey
             context.coordinator.codeStorage?.language = effectiveLanguage
@@ -244,7 +255,7 @@ struct SyntaxHighlightTextView: NSViewRepresentable {
             // to avoid concurrent JSContext access (Highlightr is not thread-safe).
             context.coordinator.suppressCodeHighlighting = true
             if isHighlightingEnabled,
-               let highlighted = highlightr.highlight(text, as: language),
+               let highlighted = highlightr?.highlight(text, as: language),
                let codeStorage = context.coordinator.codeStorage {
                 codeStorage.beginEditing()
                 codeStorage.setAttributedString(highlighted)
@@ -276,7 +287,7 @@ struct SyntaxHighlightTextView: NSViewRepresentable {
         highlightr.setTheme(to: isDark ? "atom-one-dark" : "atom-one-light")
     }
 
-    private func configureGutterTheme(_ textView: LineNumberTextView, highlightr: Highlightr) {
+    private func configureGutterTheme(_ textView: LineNumberTextView, highlightr: Highlightr?) {
         let bgColor = Self.editorBackgroundColor(for: textView, highlightr: highlightr)
         textView.gutterBackgroundColor = bgColor.blended(withFraction: 0.05, of: .gray) ?? bgColor
         textView.lineNumberColor = .secondaryLabelColor
