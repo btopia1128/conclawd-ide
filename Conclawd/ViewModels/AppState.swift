@@ -780,6 +780,7 @@ final class AppState {
             return processManager.status(sessionId: session.id)
         }
         if statuses.contains(.running) { return .running }
+        if statuses.contains(.background) { return .background }
         if statuses.contains(.waitingForInput) { return .waitingForInput }
         return .stopped(exitCode: nil)
     }
@@ -4060,6 +4061,8 @@ final class AppState {
             return handleOpenFileRequest(request)
         case "preview":
             return handlePreviewRequest(request)
+        case "status":
+            return handleStatusHookRequest(request)
         case "add-project":
             return handleAddProjectRequest(request)
         default:
@@ -4103,6 +4106,22 @@ final class AppState {
         }
         let sessionId = request.sourceSessionId.flatMap(UUID.init(uuidString:))
         openFileBesideSession(url: URL(fileURLWithPath: path), sessionId: sessionId)
+        return SessionControlResponse(ok: true, sessionId: nil, error: nil)
+    }
+
+    /// Handles a `conclawd status-hook` request: a Claude Code hook event that
+    /// tells the session's real state (running / done / background work left).
+    private func handleStatusHookRequest(_ request: SessionControlRequest) -> SessionControlResponse {
+        guard let sessionId = request.sourceSessionId.flatMap(UUID.init(uuidString:)),
+              let event = request.hookEvent else {
+            return SessionControlResponse(ok: false, sessionId: nil, error: "session id and hook event are required")
+        }
+        processManager.applyStatusHook(
+            sessionId: sessionId,
+            event: event,
+            notificationType: request.notificationType,
+            backgroundTasks: request.backgroundTasks
+        )
         return SessionControlResponse(ok: true, sessionId: nil, error: nil)
     }
 

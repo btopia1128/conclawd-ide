@@ -510,11 +510,14 @@ enum SessionDisplayMode: String {
 enum AgentProcessStatus: Equatable {
     case running
     case waitingForInput
+    /// The turn ended but background work (shells, subagents, monitors) is still
+    /// in flight and will wake the session back up. Reported by the Stop hook.
+    case background
     case stopped(exitCode: Int32?)
 
     var isActive: Bool {
         switch self {
-        case .running, .waitingForInput: return true
+        case .running, .waitingForInput, .background: return true
         case .stopped: return false
         }
     }
@@ -523,6 +526,7 @@ enum AgentProcessStatus: Equatable {
         switch self {
         case .running: return "Running"
         case .waitingForInput: return "Waiting"
+        case .background: return "Background"
         case .stopped: return "Stopped"
         }
     }

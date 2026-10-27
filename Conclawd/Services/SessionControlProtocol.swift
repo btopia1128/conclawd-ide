@@ -39,6 +39,12 @@ struct SessionControlRequest: Codable, Sendable {
     /// `open --beside`: open in the pane next to `sourceSessionId`'s session
     /// (splitting the window if needed) instead of the active pane.
     var beside: Bool? = nil
+    /// `status-hook`: the Claude Code hook event (`hook_event_name`).
+    var hookEvent: String? = nil
+    /// `status-hook` on Notification: the `notification_type`.
+    var notificationType: String? = nil
+    /// `status-hook` on Stop: descriptions of the in-flight `background_tasks`.
+    var backgroundTasks: [String]? = nil
 }
 
 /// Error reported back to the CLI as the response's `error` text.

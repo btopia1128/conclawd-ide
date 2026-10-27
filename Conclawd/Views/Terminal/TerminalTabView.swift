@@ -1014,6 +1014,7 @@ struct TerminalTabView: View {
         switch sessionStatus(for: sessionId) {
         case .running: return "bolt.fill"
         case .waitingForInput: return "checkmark.circle.fill"
+        case .background: return "arrow.triangle.2.circlepath.circle.fill"
         case .stopped: return "stop.circle"
         }
     }
@@ -1022,6 +1023,7 @@ struct TerminalTabView: View {
         switch sessionStatus(for: sessionId) {
         case .running: return .statusRunning
         case .waitingForInput: return .statusReady
+        case .background: return .statusBackground
         case .stopped: return .statusStopped
         }
     }

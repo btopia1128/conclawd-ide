@@ -770,6 +770,7 @@ struct SidebarView: View {
             : appState.processManager.status(sessionId: session.id)
         let agent = appState.agents.first { $0.id == session.agentId }
         let hasUnread = appState.processManager.processes[session.id]?.hasUnreadOutput ?? false
+        let backgroundTaskCount = appState.processManager.processes[session.id]?.backgroundTasks.count ?? 0
 
         // Display name with number if multiple sessions for same agent
         let sameAgentSessions = appState.activeSessions.filter {
@@ -861,7 +862,9 @@ struct SidebarView: View {
                             .foregroundStyle(.purple)
                             .lineLimit(1)
                     } else {
-                        Text(statusText(status))
+                        Text(status == .background && backgroundTaskCount > 0
+                             ? "\(statusText(status)) · \(backgroundTaskCount)"
+                             : statusText(status))
                             .font(.system(size: 9))
                             .foregroundStyle(statusTextColor(status))
                             .lineLimit(1)
@@ -990,6 +993,7 @@ struct SidebarView: View {
         switch status {
         case .running: return l10n.thinking
         case .waitingForInput: return l10n.ready
+        case .background: return l10n.backgroundRunning
         case .stopped: return l10n.stopped
         }
     }
@@ -998,6 +1002,7 @@ struct SidebarView: View {
         switch status {
         case .running: return .statusRunning
         case .waitingForInput: return .statusReady
+        case .background: return .statusBackground
         case .stopped: return .statusStopped
         }
     }
@@ -1245,9 +1250,9 @@ struct SidebarView: View {
                     .lineLimit(1)
 
                 if status.isActive {
-                    Text(status == .running ? l10n.thinking : l10n.ready)
+                    Text(statusText(status))
                         .font(.system(size: 9))
-                        .foregroundStyle(status == .running ? Color.statusRunning : Color.statusReady)
+                        .foregroundStyle(statusTextColor(status))
                 } else if !agent.description.isEmpty {
                     Text(agent.description)
                         .font(.system(size: 10))
@@ -2074,6 +2079,7 @@ struct SidebarView: View {
         switch status {
         case .running: return "bolt.fill"
         case .waitingForInput: return "checkmark.circle.fill"
+        case .background: return "arrow.triangle.2.circlepath.circle.fill"
         case .stopped: return "stop.circle"
         }
     }
@@ -2082,6 +2088,7 @@ struct SidebarView: View {
         switch status {
         case .running: return .statusRunning
         case .waitingForInput: return .statusReady
+        case .background: return .statusBackground
         case .stopped: return .statusStopped
         }
     }

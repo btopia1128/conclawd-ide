@@ -11,6 +11,7 @@ usage: conclawd split --title <title> (--prompt <text> | --prompt-file <path>) [
        conclawd open [--beside] <path>
        conclawd add-project <dir>
        conclawd preview-hook  (reads a Claude Code PostToolUse payload on stdin)
+       conclawd status-hook   (reads a Claude Code hook payload on stdin)
 
 split: Creates a new session tab in the running Conclawd app. The prompt is
 submitted to the new session automatically once it finishes starting. --cwd
@@ -32,6 +33,11 @@ left unchanged. Relative paths are resolved against the current directory.
 preview-hook: Claude Code PostToolUse hook installed by Conclawd. When a tool
 writes a previewable file (image, video, audio, HTML), it shows that file in
 the pane beside the session. Never fails the hook: problems exit 0 silently.
+
+status-hook: Claude Code hook installed by Conclawd on prompt submit, tool use,
+Stop and Notification. It reports the session's state (running, done, done
+with background tasks still in flight) so the sidebar status does not have
+to be guessed from terminal output. Like preview-hook, it never fails.
 """
 
 /// Extensions `preview-hook` forwards to the app. Everything else (source
@@ -65,6 +71,9 @@ var cwd: String?
 var openPath: String?
 var agent: String?
 var beside = false
+var hookEvent: String?
+var notificationType: String?
+var backgroundTasks: [String]?
 
 switch command {
 case "split":
@@ -143,12 +152,29 @@ case "preview-hook":
         : URL(fileURLWithPath: base).appendingPathComponent(rawPath)
     guard previewableExtensions.contains(url.pathExtension.lowercased()) else { exit(0) }
     openPath = url.standardizedFileURL.path
+case "status-hook":
+    silentFailures = true
+    let input = FileHandle.standardInput.readDataToEndOfFile()
+    guard ProcessInfo.processInfo.environment["CONCLAWD_SESSION_ID"] != nil,
+          let payload = try? JSONSerialization.jsonObject(with: input) as? [String: Any],
+          let event = payload["hook_event_name"] as? String else { exit(0) }
+    // Subagent tool calls fire the same hooks (with `agent_id`; a `--agent`
+    // session carries only `agent_type`). Only the main agent decides the status.
+    if payload["agent_id"] != nil { exit(0) }
+    hookEvent = event
+    notificationType = payload["notification_type"] as? String
+    if event == "Stop" {
+        let tasks = payload["background_tasks"] as? [[String: Any]] ?? []
+        backgroundTasks = tasks.map { task in
+            (task["description"] as? String) ?? (task["command"] as? String) ?? (task["type"] as? String) ?? "task"
+        }
+    }
 default:
     fail("unknown command '\(command)'\n\(usage)")
 }
 
 let request = SessionControlRequest(
-    command: command == "preview-hook" ? "preview" : command,
+    command: command == "preview-hook" ? "preview" : command == "status-hook" ? "status" : command,
     title: title,
     prompt: prompt,
     // With --agent, an implicit cwd is left to the agent's own directory.
@@ -157,10 +183,13 @@ let request = SessionControlRequest(
             ?? (agent == nil ? FileManager.default.currentDirectoryPath : nil))
         : nil,
     path: openPath,
-    sourceSessionId: (command == "split" || command == "preview-hook" || beside) ? ProcessInfo.processInfo.environment["CONCLAWD_SESSION_ID"] : nil,
+    sourceSessionId: (command == "split" || command == "preview-hook" || command == "status-hook" || beside) ? ProcessInfo.processInfo.environment["CONCLAWD_SESSION_ID"] : nil,
     agent: agent,
     callerDirectory: agent == nil ? nil : FileManager.default.currentDirectoryPath,
-    beside: beside ? true : nil
+    beside: beside ? true : nil,
+    hookEvent: hookEvent,
+    notificationType: notificationType,
+    backgroundTasks: backgroundTasks
 )
 
 let socketPath = ProcessInfo.processInfo.environment["CONCLAWD_SOCKET"]
@@ -194,7 +223,7 @@ guard connected == 0 else {
 var one: Int32 = 1
 setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, socklen_t(MemoryLayout<Int32>.size))
 // The hook blocks the session until it returns, so keep it short.
-var timeout = timeval(tv_sec: command == "preview-hook" ? 3 : 15, tv_usec: 0)
+var timeout = timeval(tv_sec: command.hasSuffix("-hook") ? 3 : 15, tv_usec: 0)
 setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
 
 let sent = payload.withUnsafeBytes { raw -> Bool in
@@ -228,7 +257,7 @@ guard let response = try? JSONDecoder().decode(SessionControlResponse.self, from
 
 if response.ok {
     switch command {
-    case "preview-hook":
+    case "preview-hook", "status-hook":
         break
     case "open":
         print(beside

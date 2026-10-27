@@ -41,6 +41,10 @@ extension Color {
     /// Light: #8E8E93 (≈3.5:1), Dark: #636366.
     static let statusStopped = Color(nsColor: .statusStopped)
 
+    /// "Background" status (turn ended, background tasks still running).
+    /// Light: #0969DA (≈5.2:1), Dark: #0A84FF.
+    static let statusBackground = Color(nsColor: .statusBackground)
+
     // MARK: - UI Elements
 
     /// Light border / stroke – replaces `.gray.opacity(0.4)`.
@@ -164,6 +168,13 @@ extension NSColor {
             return NSColor(srgbRed: 0.388, green: 0.388, blue: 0.400, alpha: 1.0) // #636366
         }
         return NSColor(srgbRed: 0.557, green: 0.557, blue: 0.576, alpha: 1.0) // #8E8E93
+    }
+
+    static let statusBackground = NSColor(name: nil) { appearance in
+        if appearance.isDarkMode {
+            return NSColor(srgbRed: 0.039, green: 0.518, blue: 1.0, alpha: 1.0) // #0A84FF
+        }
+        return NSColor(srgbRed: 0.035, green: 0.412, blue: 0.855, alpha: 1.0) // #0969DA
     }
 
     // MARK: UI Elements

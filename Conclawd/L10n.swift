@@ -267,6 +267,7 @@ struct L10n {
 
     var thinking: String { s("Thinking...", "考え中...") }
     var ready: String { s("Ready", "待機中") }
+    var backgroundRunning: String { s("Background", "BG実行中") }
     var stopped: String { s("Stopped", "停止") }
     var running: String { s("Running", "実行中") }
     var waiting: String { s("Waiting", "待機中") }

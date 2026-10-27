@@ -41,6 +41,17 @@ final class AgentProcessManager {
     /// Seconds of silence before marking an agent as "waiting for input".
     private let idleThreshold: TimeInterval = 2.5
 
+    /// Sessions whose status comes from Claude Code hooks (`conclawd status-hook`).
+    /// Once a session reports through hooks, Stop decides when a turn ends and the
+    /// silence heuristic above no longer applies: a pause in output mid-turn used
+    /// to flip the session to "Ready" while Claude was still working.
+    private var hookReportedSessions: Set<UUID> = []
+
+    /// Silence before a hook-reported running session falls back to "waiting".
+    /// Stop does not fire when the user interrupts a turn (Esc), so without this
+    /// the session would stay "running" forever.
+    private let hookFallbackIdleThreshold: TimeInterval = 30
+
     let cliPathResolver = CLIPathResolver()
 
     /// Backward-compatible alias.
@@ -218,7 +229,7 @@ final class AgentProcessManager {
         var env = buildEnvironment()
         env.append("CONCLAWD_SESSION_ID=\(sessionId.uuidString)")
         if provider == .claude {
-            appendClaudePreviewHook(args: &args, env: &env)
+            appendClaudeSessionHooks(args: &args, env: &env)
         }
         if let systemPrompt, !systemPrompt.isEmpty {
             switch provider {
@@ -721,6 +732,54 @@ final class AgentProcessManager {
         }
     }
 
+    /// Applies a Claude Code hook event reported by `conclawd status-hook`.
+    func applyStatusHook(sessionId: UUID, event: String, notificationType: String?, backgroundTasks: [String]?) {
+        guard let process = processes[sessionId], process.status.isActive else { return }
+        hookReportedSessions.insert(sessionId)
+        let now = Date()
+
+        switch event {
+        case "UserPromptSubmit", "PreToolUse", "PostToolUse":
+            // UserPromptSubmit also fires when a background subagent reports back
+            // or a session cron fires, so a "background" session resumes here.
+            if process.status != .running {
+                lastInteraction[sessionId] = now
+            }
+            process.status = .running
+            process.backgroundTasks = []
+            expectingResponse[sessionId] = true
+            lastDataReceived[sessionId] = now
+        case "Stop":
+            let tasks = backgroundTasks ?? []
+            process.backgroundTasks = tasks
+            finishTurn(sessionId: sessionId, process: process, status: tasks.isEmpty ? .waitingForInput : .background)
+        case "StopFailure":
+            process.backgroundTasks = []
+            finishTurn(sessionId: sessionId, process: process, status: .waitingForInput)
+        case "Notification":
+            // A permission or MCP prompt is waiting on the user. Not a finished
+            // turn, so idle-triggered prompt delivery (onStatusChanged) is skipped.
+            guard process.status == .running else { return }
+            print("[StatusHook] \(sessionId) waiting on \(notificationType ?? "notification")")
+            process.status = .waitingForInput
+            expectingResponse[sessionId] = false
+            if !viewingSessionIds.contains(sessionId) {
+                process.hasUnreadOutput = true
+            }
+        default:
+            break
+        }
+    }
+
+    private func finishTurn(sessionId: UUID, process: AgentProcess, status: AgentProcessStatus) {
+        process.status = status
+        expectingResponse[sessionId] = false
+        onStatusChanged?(sessionId, status)
+        if !viewingSessionIds.contains(sessionId) {
+            process.hasUnreadOutput = true
+        }
+    }
+
     private func startIdleTimer() {
         guard idleTimer == nil else { return }
 
@@ -744,9 +803,10 @@ final class AgentProcessManager {
             guard process.status.isActive else { continue }
             hasActiveProcesses = true
 
+            let threshold = hookReportedSessions.contains(sessionId) ? hookFallbackIdleThreshold : idleThreshold
             if process.status == .running,
                let lastData = lastDataReceived[sessionId],
-               now.timeIntervalSince(lastData) >= idleThreshold {
+               now.timeIntervalSince(lastData) >= threshold {
                 process.status = .waitingForInput
                 expectingResponse[sessionId] = false
                 onStatusChanged?(sessionId, .waitingForInput)
@@ -1130,6 +1190,7 @@ final class AgentProcessManager {
         lastInteraction.removeValue(forKey: sessionId)
         expectingResponse.removeValue(forKey: sessionId)
         lastUserPrompt.removeValue(forKey: sessionId)
+        hookReportedSessions.remove(sessionId)
     }
 
     // MARK: - Status
@@ -1383,21 +1444,35 @@ final class AgentProcessManager {
         UserDefaults.standard.object(forKey: autoPreviewDefaultsKey) as? Bool ?? true
     }
 
-    /// Adds a session-scoped PostToolUse hook (via `--settings`, merged with the
-    /// user's own hooks rather than written into ~/.claude/settings.json) that
-    /// runs `conclawd preview-hook` after Write/Edit. The helper forwards only
-    /// previewable media and HTML, so ordinary code edits are untouched.
-    private func appendClaudePreviewHook(args: inout [String], env: inout [String]) {
-        guard Self.sessionControlCLIPath != nil, Self.isAutoPreviewEnabled else { return }
+    /// Adds session-scoped hooks (via `--settings`, merged with the user's own
+    /// hooks rather than written into ~/.claude/settings.json):
+    /// - `conclawd status-hook` on prompt submit, tool use, Stop and Notification,
+    ///   so the session status is reported by Claude Code instead of guessed
+    ///   from terminal output (see `applyStatusHook`).
+    /// - `conclawd preview-hook` after Write/Edit. The helper forwards only
+    ///   previewable media and HTML, so ordinary code edits are untouched.
+    private func appendClaudeSessionHooks(args: inout [String], env: inout [String]) {
+        guard Self.sessionControlCLIPath != nil else { return }
+        func command(_ name: String) -> [String: Any] {
+            ["type": "command", "command": "\"$CONCLAWD_CLI\" \(name)", "timeout": 5]
+        }
+        // Synchronous on purpose: async hooks could deliver a tool-use "running"
+        // after the turn's Stop and leave the session stuck as running.
+        let status = [["hooks": [command("status-hook")]]]
+        var postToolUse: [[String: Any]] = status
+        if Self.isAutoPreviewEnabled {
+            postToolUse.append(["matcher": "Write|Edit|MultiEdit", "hooks": [command("preview-hook")]])
+        }
         let settings: [String: Any] = [
             "hooks": [
-                "PostToolUse": [[
-                    "matcher": "Write|Edit|MultiEdit",
-                    "hooks": [[
-                        "type": "command",
-                        "command": "\"$CONCLAWD_CLI\" preview-hook",
-                        "timeout": 5,
-                    ]],
+                "UserPromptSubmit": status,
+                "PreToolUse": status,
+                "PostToolUse": postToolUse,
+                "Stop": status,
+                "StopFailure": status,
+                "Notification": [[
+                    "matcher": "permission_prompt|elicitation_dialog|elicitation_url_dialog",
+                    "hooks": [command("status-hook")],
                 ]],
             ],
         ]
@@ -1412,7 +1487,7 @@ final class AgentProcessManager {
     /// The payload travels through an environment variable so it never hits
     /// the command line.
     private func appendClaudeSystemPrompt(memoryContext: String?, args: inout [String], env: inout [String]) {
-        appendClaudePreviewHook(args: &args, env: &env)
+        appendClaudeSessionHooks(args: &args, env: &env)
         guard let prompt = SessionControlPrompt.combined(
             with: memoryContext, cliAvailable: Self.sessionControlCLIPath != nil) else { return }
         env.append("_AGENT_TERMINAL_APPEND_PROMPT=\(prompt)")

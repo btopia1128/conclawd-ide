@@ -559,6 +559,7 @@ struct AgentInspectorView: View {
         switch status {
         case .running: return "bolt.fill"
         case .waitingForInput: return "checkmark.circle.fill"
+        case .background: return "arrow.triangle.2.circlepath.circle.fill"
         case .stopped: return "stop.circle"
         }
     }
@@ -567,6 +568,7 @@ struct AgentInspectorView: View {
         switch status {
         case .running: return .statusRunning
         case .waitingForInput: return .statusReady
+        case .background: return .statusBackground
         case .stopped: return .statusStopped
         }
     }
@@ -575,6 +577,7 @@ struct AgentInspectorView: View {
         switch status {
         case .running: return l10n.thinking
         case .waitingForInput: return l10n.ready
+        case .background: return l10n.backgroundRunning
         case .stopped: return l10n.stopped
         }
     }
@@ -583,6 +586,7 @@ struct AgentInspectorView: View {
         switch status {
         case .running: return .statusRunning
         case .waitingForInput: return .statusReady
+        case .background: return .statusBackground
         case .stopped: return .statusStopped
         }
     }

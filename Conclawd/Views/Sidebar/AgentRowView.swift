@@ -86,6 +86,16 @@ struct AgentRowView: View {
             Circle()
                 .fill(Color.statusReady)
                 .frame(width: 8, height: 8)
+        case .background:
+            // Ringed blue dot for "turn ended, background tasks still running"
+            Circle()
+                .fill(Color.statusBackground)
+                .frame(width: 8, height: 8)
+                .overlay(
+                    Circle()
+                        .stroke(Color.statusBackground.opacity(0.5), lineWidth: 2)
+                        .frame(width: 12, height: 12)
+                )
         case .stopped:
             // Gray dot for "stopped"
             Circle()
@@ -98,6 +108,7 @@ struct AgentRowView: View {
         switch processStatus {
         case .running: return l10n.thinking
         case .waitingForInput: return l10n.ready
+        case .background: return l10n.backgroundRunning
         case .stopped: return ""
         }
     }
@@ -106,6 +117,7 @@ struct AgentRowView: View {
         switch processStatus {
         case .running: return .statusRunning
         case .waitingForInput: return .statusReady
+        case .background: return .statusBackground
         case .stopped: return .statusStopped
         }
     }

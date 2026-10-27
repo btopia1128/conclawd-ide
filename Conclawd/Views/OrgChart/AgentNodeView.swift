@@ -140,6 +140,7 @@ struct AgentNodeView: View {
         switch processStatus {
         case .running: return .statusRunning
         case .waitingForInput: return .statusReady
+        case .background: return .statusBackground
         case .stopped: return .statusStopped
         }
     }

@@ -14,6 +14,8 @@ final class AgentProcess: Identifiable {
     var cliProviderType: CLIProviderType = .claude
     /// Whether this session has output the user hasn't seen yet.
     var hasUnreadOutput: Bool = false
+    /// In-flight background tasks reported by the last Stop hook (status `.background`).
+    var backgroundTasks: [String] = []
 
     init(agentId: UUID) {
         self.agentId = agentId
